@@ -8,6 +8,15 @@
 
 #pragma GCC target("avx2,fma")
 
+#define MIN(a, b)                                                              \
+  ({                                                                           \
+    __typeof__(a) _a = (a);                                                    \
+    __typeof__(b) _b = (b);                                                    \
+    _a < _b ? _a : _b;                                                         \
+  })
+
+#define BLOCK_SIZE 32
+
 // L1d - 32KB
 
 /*
@@ -22,42 +31,157 @@
 //   return sum;
 // }
 
-double reduce_vec(__m256d vec) {
-  __m128d upper = _mm256_extractf128_pd(vec, 1);
-  __m128d lower = _mm256_castpd256_pd128(vec);
+// double reduce_vec(__m256d vec) {
+//   __m128d upper = _mm256_extractf128_pd(vec, 1);
+//   __m128d lower = _mm256_castpd256_pd128(vec);
+//
+//   __m128d partial_sum = _mm_add_pd(upper, lower);
+//   __m128d partial_sum_high = _mm_unpackhi_pd(partial_sum, partial_sum);
+//   __m128d result = _mm_add_sd(partial_sum, partial_sum_high);
+//
+//   return _mm_cvtsd_f64(result);
+// }
 
-  __m128d partial_sum = _mm_add_pd(upper, lower);
-  __m128d partial_sum_high = _mm_unpackhi_pd(partial_sum, partial_sum);
-  __m128d result = _mm_add_sd(partial_sum, partial_sum_high);
+// double vec_dot(int N, const double *a, const double *b) {
+//   register __m256d sum_vec = _mm256_setzero_pd();
+//
+//   register int i = 0;
+//   register const double *a_ptr = a;
+//   register const double *b_ptr = b;
+//   const register int limit = N & ~3;
+//   for (; i < limit; i += 4, a_ptr += 4, b_ptr += 4) {
+//     __m256d x = _mm256_loadu_pd(a_ptr);
+//     __m256d y = _mm256_loadu_pd(b_ptr);
+//     sum_vec = _mm256_fmadd_pd(x, y, sum_vec);
+//   }
+//
+//   register double res = 0;
+//   switch (N - limit) {
+//   case 3:
+//     res += a_ptr[2] * b_ptr[2];
+//   case 2:
+//     res += a_ptr[1] * b_ptr[1];
+//   case 1:
+//     res += a_ptr[0] * b_ptr[0];
+//   }
+//
+//   return res + reduce_vec(sum_vec);
+// }
 
-  return _mm_cvtsd_f64(result);
-}
+#define reduce_vec(vec)                                                        \
+  ({                                                                           \
+    __m128d upper = _mm256_extractf128_pd(vec, 1);                             \
+    __m128d lower = _mm256_castpd256_pd128(vec);                               \
+                                                                               \
+    __m128d partial_sum = _mm_add_pd(upper, lower);                            \
+    __m128d partial_sum_high = _mm_unpackhi_pd(partial_sum, partial_sum);      \
+    __m128d result = _mm_add_sd(partial_sum, partial_sum_high);                \
+                                                                               \
+    _mm_cvtsd_f64(result);                                                     \
+  })
 
-double vec_dot(int N, const double *a, const double *b) {
-  register __m256d sum_vec = _mm256_setzero_pd();
+#define vec_dot(N, a, b)                                                       \
+  ({                                                                           \
+    register __m256d sum_vec = _mm256_setzero_pd();                            \
+                                                                               \
+    register int i = 0;                                                        \
+    register const double *a_ptr = a;                                          \
+    register const double *b_ptr = b;                                          \
+    const register int limit = N & ~3;                                         \
+    for (; i < limit; i += 4, a_ptr += 4, b_ptr += 4) {                        \
+      __m256d x = _mm256_loadu_pd(a_ptr);                                      \
+      __m256d y = _mm256_loadu_pd(b_ptr);                                      \
+      sum_vec = _mm256_fmadd_pd(x, y, sum_vec);                                \
+    }                                                                          \
+                                                                               \
+    register double res = 0;                                                   \
+    switch (N - limit) {                                                       \
+    case 3:                                                                    \
+      res += a_ptr[2] * b_ptr[2];                                              \
+    case 2:                                                                    \
+      res += a_ptr[1] * b_ptr[1];                                              \
+    case 1:                                                                    \
+      res += a_ptr[0] * b_ptr[0];                                              \
+    }                                                                          \
+                                                                               \
+    res + reduce_vec(sum_vec);                                                 \
+  })
 
-  register int i = 0;
-  register const double *a_ptr = a;
-  register const double *b_ptr = b;
-  const register int limit = N & ~3;
-  for (; i < limit; i += 4, a_ptr += 4, b_ptr += 4) {
-    __m256d x = _mm256_loadu_pd(a_ptr);
-    __m256d y = _mm256_loadu_pd(b_ptr);
-    sum_vec = _mm256_fmadd_pd(x, y, sum_vec);
-  }
+// void bmm_ikj(int N, const double *A, const double *B, double *C) {
+#define bmm_ikj(N, A, B, C)                                                    \
+  ({                                                                           \
+    for (register int bi = 0; bi < N; bi += BLOCK_SIZE) {                      \
+      for (register int bj = 0; bj < N; bj += BLOCK_SIZE) {                    \
+        for (register int bk = 0; bk < N; bk += BLOCK_SIZE) {                  \
+                                                                               \
+          register const int max_i = MIN(bi + BLOCK_SIZE, N);                  \
+          register const int max_j = MIN(bj + BLOCK_SIZE, N);                  \
+          register const int max_k = MIN(bk + BLOCK_SIZE, N);                  \
+                                                                               \
+          register double *c_ptr = &C[bi * N + bj];                            \
+                                                                               \
+          register const double *a_t_ptr = &A[bk * N + bi];                    \
+                                                                               \
+          for (register int i = bi; i < max_i; ++i, c_ptr += N, ++a_t_ptr) {   \
+                                                                               \
+            register const double *local_a_t_ptr = a_t_ptr;                    \
+                                                                               \
+            register const double *b_ptr = &B[bk * N + bj];                    \
+            for (register int k = bk; k < max_k;                               \
+                 ++k, local_a_t_ptr += N, b_ptr += N) {                        \
+                                                                               \
+              register double *local_c_ptr = c_ptr;                            \
+              register const double *local_b_ptr = b_ptr;                      \
+                                                                               \
+              register const double a_t_val = *local_a_t_ptr;                  \
+                                                                               \
+              for (register int j = bj; j < max_j;                             \
+                   ++j, ++local_c_ptr, ++local_b_ptr) {                        \
+                *local_c_ptr += a_t_val * *local_b_ptr;                        \
+              }                                                                \
+            }                                                                  \
+          }                                                                    \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  })
 
-  register double res = 0;
-  switch (N - limit) {
-  case 3:
-    res += a_ptr[2] * b_ptr[2];
-  case 2:
-    res += a_ptr[1] * b_ptr[1];
-  case 1:
-    res += a_ptr[0] * b_ptr[0];
-  }
-
-  return res + reduce_vec(sum_vec);
-}
+#define bmm_ijk(N, A, B, C)                                                    \
+  ({                                                                           \
+    for (register int bi = 0; bi < N; bi += BLOCK_SIZE) {                      \
+      for (register int bj = 0; bj < N; bj += BLOCK_SIZE) {                    \
+        for (register int bk = 0; bk < N; bk += BLOCK_SIZE) {                  \
+                                                                               \
+          register const int max_i = MIN(bi + BLOCK_SIZE, N);                  \
+          register const int max_j = MIN(bj + BLOCK_SIZE, N);                  \
+          register const int max_k = MIN(bk + BLOCK_SIZE, N);                  \
+                                                                               \
+          register double *c_ptr = &C[bi * N + bj];                            \
+          register const int c_row_stride = N - (max_j - bj);                  \
+                                                                               \
+          register const double *a_t_ptr = &A[bk * N + bi];                    \
+                                                                               \
+          for (register int i = bi; i < max_i;                                 \
+               ++i, c_ptr += c_row_stride, ++a_t_ptr) {                        \
+                                                                               \
+            register double *b_ptr = &B[bk * N + bj];                          \
+                                                                               \
+            for (register int j = bj; j < max_j; ++j, ++b_ptr, ++c_ptr) {      \
+                                                                               \
+              register const double *local_b_ptr = b_ptr;                      \
+              register const double *local_a_t_ptr = a_t_ptr;                  \
+                                                                               \
+              for (register int k = bk; k < max_k;                             \
+                   ++k, local_b_ptr += N, local_a_t_ptr += N) {                \
+                                                                               \
+                *c_ptr += *local_a_t_ptr * *local_b_ptr;                       \
+              }                                                                \
+            }                                                                  \
+          }                                                                    \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  })
 
 double *my_solver(int N, double *A, double *B, double *x) {
 
@@ -67,15 +191,18 @@ double *my_solver(int N, double *A, double *B, double *x) {
 
   // matrix_mult(N, aux, B, c);
   // c = A^T * B
-  for (register int i = 0; i < N; ++i) {
-    for (register int k = 0; k < N; ++k) {
-      // instead of transposing, we can change the indexing of A
-      register const double a_t_val = A[k * N + i];
-      for (register int j = 0; j < N; ++j) {
-        c[i * N + j] += a_t_val * B[k * N + j];
-      }
-    }
-  }
+  // for (register int i = 0; i < N; ++i) {
+  //   for (register int k = 0; k < N; ++k) {
+  //     // instead of transposing, we can change the indexing of A
+  //     register const double a_t_val = A[k * N + i];
+  //     for (register int j = 0; j < N; ++j) {
+  //       c[i * N + j] += a_t_val * B[k * N + j];
+  //     }
+  //   }
+  // }
+  // blocked matrix multiplication
+  // I K J
+  bmm_ikj(N, A, B, c);
 
   double *d = c + N * N;
   // d = c * c^T
