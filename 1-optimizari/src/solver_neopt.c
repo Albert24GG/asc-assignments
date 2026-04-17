@@ -9,18 +9,6 @@
  * Add your unoptimized implementation here
  */
 
-void matrix_mult(int N, double *A, double *B, double *C) {
-  for (int i = 0; i < N; ++i) {
-    for (int j = 0; j < N; ++j) {
-      double sum = 0;
-      for (int k = 0; k < N; ++k) {
-        sum += A[i * N + k] * B[k * N + j];
-      }
-      C[i * N + j] = sum;
-    }
-  }
-}
-
 void fill_with_transpose(int N, double *A, double *B) {
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
@@ -41,6 +29,18 @@ void matrix_mult_upper(int N, double *A, double *B, double *C) {
   }
 }
 
+void matrix_mult(int N, double *A, double *B, double *C) {
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      double sum = 0;
+      for (int k = 0; k < N; ++k) {
+        sum += A[i * N + k] * B[k * N + j];
+      }
+      C[i * N + j] = sum;
+    }
+  }
+}
+
 double *my_solver(int N, double *A, double *B, double *x) {
   // transpose
   double *aux = malloc(N * N * sizeof(double));
@@ -48,7 +48,6 @@ double *my_solver(int N, double *A, double *B, double *x) {
 
   fill_with_transpose(N, A, aux);
 
-  // matrix_mult(N, aux, B, c);
   // c = A^T * B
   matrix_mult(N, aux, B, c);
 
@@ -56,18 +55,9 @@ double *my_solver(int N, double *A, double *B, double *x) {
   fill_with_transpose(N, c, aux);
 
   double *d = malloc(N * N * sizeof(double));
-  // matrix_mult(N, c, aux, d);
   // d = c * c^T
   // compute only upper triangular part of d, since d is symmetric
-  for (int i = 0; i < N; ++i) {
-    for (int j = i; j < N; ++j) {
-      double sum = 0;
-      for (int k = 0; k < N; ++k) {
-        sum += c[i * N + k] * aux[k * N + j];
-      }
-      d[i * N + j] = sum;
-    }
-  }
+  matrix_mult_upper(N, c, aux, d);
 
   double *y = calloc(N, sizeof(double));
   double *sum_rows_c = aux;
