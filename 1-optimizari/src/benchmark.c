@@ -11,8 +11,6 @@
 #include "argparse.h"
 #include "utils.h"
 
-#pragma GCC optimize("O3")
-
 #define RANGE 1
 
 #define MAX(a, b)                                                              \
