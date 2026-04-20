@@ -59,7 +59,7 @@ void compute_block(int N, const double *a_t_ptr, const double *b_ptr,
 }
 
 void bmm_kij(int N, const double *A, const double *B, double *C) {
-  register const int limit = N & ~(BLOCK_SIZE - 1);
+  register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
 
   {
     register const double *a_t_ptr = A;
