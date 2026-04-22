@@ -32,13 +32,29 @@ Benchmark for my_solver
     -p, --print-times     print individual run times, default: false
 ```
 
+
+In the following sections, any use of the benchmark command will be use the following arguments, unless specified otherwise:
+```bash
+<bench_program> -n <N> -s 1234 -w 10 -t 30 -a 16
+
+```
+
+In other words, the benchmark will be run with matrices of size `N`, a random seed of `1234`, 10 warmup runs, 30 test runs, and pinned to CPU core 16.
+
 ## Valgrind command
 
 For detailed performance analysis, I used the following command:
 
+```bash
+valgrind --tool=cachegrind --branch-sim=yes --cache-sim=yes --collect-jumps=yes --dump-instr=yes --I1=32768,8,64 --D1=32768,8,64 --LL=20971520,20,64 <benchmark_command>
 ```
-valgrind --tool=callgrind --branch-sim=yes --cache-sim=yes --collect-jumps=yes --dump-instr=yes --I1=32768,8,64 --D1=32768,8,64 --LL=20971520,20,64 <benchmark_command>
+
+The benchmark command arguments used for running callgrind are the following:
+```bash
+<bench_program> -n <N> -s 1234 -t 1 -a 16
 ```
+
+Even if valgrind does not care about cpu affinity, I still set it to 16, to be consistent with the benchmarking methodology.
 
 This is not a perfect simulation of the haswell architecture, since valgrind runs in its own environment, but is the closest I could get without access to `perf`.
 
@@ -66,7 +82,7 @@ For the optimized version, I worked in an incremental manner. All versions are a
 
 The first iteration is `solver_opt_base.c`. It implements all basic optimizations discussed during the labs, without any AI assistance or without necessarily doing anything hardware-specific. The optimizations I implemented are:
 
-- Since we are compiling with `-O0`, the compiler won't even bother placing the variables in registers, so I manually specified the `register` keyword for any variable used. This indeed cluttered the code a lot, but I could not see any way around it. This, however, does not guarantee all variables will be placed in registers, for example if there are more variables than registers, but it still seems to have a significant impact on the performance. The decompiled output also shows variables previously stored on the stack are now stored in registers.
+- Since we are compiling with `-O0`, the compiler won't even bother placing the variables in registers, so I manually specified the `register` keyword for any variable used. This indeed cluttered the code a lot, but I could not see any way around it. This, however, does not guarantee all variables will be placed in registers, for example if there are more variables than registers (a.k.a register spilling), but it still seems to have a significant impact on the performance. The decompiled output also shows variables previously stored on the stack are now stored in registers.
 
 - Used the same distributive property trick as in the unoptimized version, so the complexities are the same. What I changed is how I store the data. Instead of storing `D` as a full `NxN` matrix, I only store its upper triangular part, so each line decreases in size by 1 element: first N elements represent the first line, the following N-1 elements represent the second line, and so on. This way, I save half of the memory, and now the matrix is no longer sparse, meaning that it should be more cache-friendly.
 
@@ -74,11 +90,9 @@ The first iteration is `solver_opt_base.c`. It implements all basic optimization
 
 - The pointers used during loop iterations were stored in separate variables, which were incremented during the iterations, instead of using the original pointers and doing pointer arithmetic on them. This should save at least one multiplication (`m[i * n + j]`), which adds up when doing it millions of times.
 
-- Used blocked matrix multiplication for the initial `C = A^t * B` computation. As seen during the labs, this improves cache performance. For the block size, I applied the formula `block_size = sqrt(L1_cache_size / (sizeof(double) * 3))`. Since the L1 cache on haswell is 32KB, the result is 36.9, which rounded to a multiple of 8 (`8 * sizeof(double)` = 64 bytes, which is the cache line size) gives us a block size of 32. As N is a multiple of 40, I had to split the computation in 4 parts: the main part where we do blocked matrix multiplication for `N/BLOCK_SIZE` blocks, and then the remaining 3 parts that were not covered: the right strip, the bottom strip and the contribution of these strips to the main large block.
+- Used blocked matrix multiplication for the initial `C = A^t * B` computation. As seen during the labs, this improves cache performance. For choosing the right block size, I applied the formula `block_size = sqrt(L1_cache_size / (sizeof(double) * 3))`. Since the L1 cache on haswell is 32KB, the result is 36.9, which rounded to a multiple of 8 (`8 * sizeof(double)` = 64 bytes, which is the cache line size) gives us a block size of 32. Since N is a multiple of 40, I had to split the computation in 4 parts: the main part where we do blocked matrix multiplication for `N/BLOCK_SIZE` blocks, and then the remaining 3 parts that were not covered: the right strip, the bottom strip and the contribution of these strips to the main large block.
 
-- Implemented loop reordering for the `C = A^t * B` computation. Since the formula is essentially `C[i][j] += A[k][i] * B[k][j]`, the theoretically optimal loop order should be `k-i-j`, because `A[k][i]` is a constant during the inner loop, and `B[k][j]` and `C[i][j]` are accessed sequentially.
-
-<!-- - To avoid register possible register spilling and stack misalignment, I forcefully inlined the function calles using the `__attribute__((always_inline))` attribute. -->
+- Implemented loop reordering for the `C = A^t * B` computation. Since the formula is essentially `C[i][j] += A[k][i] * B[k][j]`, the theoretically optimal loop order is `k-i-j`, because `A[k][i]` is a constant during the inner loop, and `B[k][j]` and `C[i][j]` are accessed sequentially.
 
 
 ## Optimized versions
@@ -88,6 +102,8 @@ The first iteration is `solver_opt_base.c`. It implements all basic optimization
 First I wanted to see the impact of just inlining the function calls. I used the `__attribute__((always_inline))` attribute for this. The modified version is `solver_opt_inline.c`. 
 
 ```bash
-./bench_opt_inline -n 1200 -s 1234 -w 5 -t 15 -a 16
+./bench_opt_inline -n 1200 -s 1234 -w 10 -t 30 -a 16
 
 ```
+
+
