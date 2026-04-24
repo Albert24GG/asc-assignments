@@ -1,0 +1,273 @@
+For my "Computer Systems Architecture" assignment I have to implement 3 versions of an algorithm. The pseudocode for the algorithm is the following:
+
+```
+C = At * B
+D = C * Ct
+y = init_vector(N, 0)
+i = 0
+while (i < N) {
+    y += D * linie(C, i)
+    i += 1
+}
+y = y + x
+return y
+```
+
+The three implementations required are:
+- 1 using solely blas. No hand-crafted work.
+- 1 dumb unoptimized version that implements the algorithm as is.
+- 1 optimized version, including hardware specific optimizations.
+
+Mentions:
+- the optimized and unoptimized version must have the same time complexity. So no math tricks to reduce the number of operations. The optimizations should only be cache/hardware related.
+- both the optimized and unoptimized versions must use the symmetric property of the matrix D.
+
+The hardware I am working with is the following:
+- CPU Model: Intel(R) Xeon(R) CPU E5-2640 v3
+- Base frequency: 2.60GHz
+- Boost frequency: 3.40GHz
+- Socket: 2
+- Number of cores per socket: 8
+- Threads per core: 2
+- L1d cache: 32KB per core => 8-way associative, 64 sets
+- L1i cache: 32KB per core => 8-way associative, 64 sets
+- L2 cache: 256KB per core => 8-way associative, 512 sets
+- L3 cache: 20MB shared between all cores of a socket => 20-way associative, 16384 sets
+
+
+I have already implemented all versions. The project is structured as follows:
+.
+├── argparse.c
+├── argparse.h
+├── benchmark.c
+├── compare.c
+├── impl_variants
+│   ├── solver_neopt_equiv.c
+│   ├── solver_opt_avx.c
+│   ├── solver_opt_base.c
+│   ├── solver_opt_inline.c
+├── main.c
+├── Makefile
+├── README.md
+├── results
+│   ├── blas/
+│   ├── neopt/
+│   ├── neopt_equiv/
+│   ├── opt_avx/
+│   ├── opt_base/
+│   └── opt_inline/
+├── solver_blas.c
+├── solver_neopt.c
+├── solver_opt.c
+├── solver_opt_inline.c
+└── utils.h
+
+- `solver_blas.c` - the blas version of the algorithm, using the cblas library for matrix operations.
+- `solver_neopt.c` - the unoptimized version of the algorithm, implementing the pseudocode as is.
+- `impl_variants/` - a directory containing the optimized version of the algorithm. For this I have chosen an iterative approach, where I started with a base optimized version (`opt_versions/solver_opt_base.c`) which does not use much hardware specific optimizations besides tiled matrix multiplication. The next iteration (`opt_versions/solver_opt_inline.c`) is the same as the base version but with the important function calls being inlined. And the final iteration (`opt_versions/solver_opt_avx.c`) is the same as the inline version but making use of AVX intrinsics for the matrix multiplication and vector operations. There is also `impl_variants/solver_neopt_equiv.c` which is the same as `solver_neopt.c` but using the distributive property of the operation `D * row(C, 0) + D * row(C, 1) + ... + D * row(C, N-1) = D * (row(C, 0) + row(C, 1) + ... + row(C, N-1))` (which `solver_neopt.c` does not use) so that it is equivalent in time complexity to the optimized versions.
+
+
+For the assignment, alongside the code implementations, I also have to write a report where I explain the optimizations I have made and support them with performance measurement graphs. For the run time performance, I wrote a simple benchmarking program (`benchmark.c`) that runs the algorithm a number of times and computes statistics based on the execution times. For the other metrics, such as cache misses or instruction counts, I am using `cachegrind` from the `valgrind` suite.
+
+For the current implementations I have already run the benchmarks and collected the performance data. The project structure regarding the performance data is as follows:
+
+results/
+├── blas/
+│   ├── bench_blas
+│   ├── bench_results
+│   └── cachegrind_results/
+│       ├── n1000/
+│       │   └── cachegrind_blas_n1000
+│       ├── n1200/
+│       │   └── cachegrind_blas_n1200
+│       ├── n1400/
+│       │   └── cachegrind_blas_n1400
+│       ├── n400/
+│       │   └── cachegrind_blas_n400
+│       ├── n600/
+│       │   └── cachegrind_blas_n600
+│       └── n800/
+│           └── cachegrind_blas_n800
+├── neopt/
+│   ├── bench_neopt
+│   ├── bench_results
+│   └── cachegrind_results/
+│       ├── n1000/
+│       │   └── cachegrind_neopt_n1000
+│       ├── n1200/
+│       │   └── cachegrind_neopt_n1200
+│       ├── n1400/
+│       │   └── cachegrind_neopt_n1400
+│       ├── n400/
+│       │   └── cachegrind_neopt_n400
+│       ├── n600/
+│       │   └── cachegrind_neopt_n600
+│       └── n800/
+│           └── cachegrind_neopt_n800
+├── neopt_equiv/
+│   ├── bench_neopt_equiv
+│   ├── bench_results
+│   └── cachegrind_results/
+│       ├── n1000/
+│       │   └── cachegrind_neopt_equiv_n1000
+│       ├── n1200/
+│       │   └── cachegrind_neopt_equiv_n1200
+│       ├── n1400/
+│       │   └── cachegrind_neopt_equiv_n1400
+│       ├── n400/
+│       │   └── cachegrind_neopt_equiv_n400
+│       ├── n600/
+│       │   └── cachegrind_neopt_equiv_n600
+│       └── n800/
+│           └── cachegrind_neopt_equiv_n800
+├── opt_avx/
+│   ├── bench_opt_avx
+│   ├── bench_results
+│   └── cachegrind_results/
+│       ├── n1000/
+│       │   └── cachegrind_opt_avx_n1000
+│       ├── n1200/
+│       │   └── cachegrind_opt_avx_n1200
+│       ├── n1400/
+│       │   └── cachegrind_opt_avx_n1400
+│       ├── n400/
+│       │   └── cachegrind_opt_avx_n400
+│       ├── n600/
+│       │   └── cachegrind_opt_avx_n600
+│       └── n800/
+│           └── cachegrind_opt_avx_n800
+├── opt_base/
+│   ├── bench_opt_base
+│   ├── bench_results
+│   └── cachegrind_results/
+│       ├── n1000/
+│       │   └── cachegrind_opt_base_n1000
+│       ├── n1200/
+│       │   └── cachegrind_opt_base_n1200
+│       ├── n1400/
+│       │   └── cachegrind_opt_base_n1400
+│       ├── n400/
+│       │   └── cachegrind_opt_base_n400
+│       ├── n600/
+│       │   └── cachegrind_opt_base_n600
+│       └── n800/
+│           └── cachegrind_opt_base_n800
+└── opt_inline/
+    ├── block24/
+    │   ├── bench_opt_inline_block24
+    │   ├── bench_results
+    │   └── cachegrind_results/
+    │       ├── n1000/
+    │       │   └── cachegrind_opt_inline_block24_n1000
+    │       ├── n1200/
+    │       │   └── cachegrind_opt_inline_block24_n1200
+    │       ├── n1400/
+    │       │   └── cachegrind_opt_inline_block24_n1400
+    │       ├── n400/
+    │       │   └── cachegrind_opt_inline_block24_n400
+    │       ├── n600/
+    │       │   └── cachegrind_opt_inline_block24_n600
+    │       └── n800/
+    │           └── cachegrind_opt_inline_block24_n800
+    ├── block32/
+    │   ├── bench_opt_inline_block32
+    │   ├── bench_results
+    │   └── cachegrind_results/
+    │       ├── n1000/
+    │       │   └── cachegrind_opt_inline_block32_n1000
+    │       ├── n1200/
+    │       │   └── cachegrind_opt_inline_block32_n1200
+    │       ├── n1400/
+    │       │   └── cachegrind_opt_inline_block32_n1400
+    │       ├── n400/
+    │       │   └── cachegrind_opt_inline_block32_n400
+    │       ├── n600/
+    │       │   └── cachegrind_opt_inline_block32_n600
+    │       └── n800/
+    │           └── cachegrind_opt_inline_block32_n800
+    └── block40/
+        ├── bench_opt_inline_block40
+        ├── bench_results
+        └── cachegrind_results/
+            ├── n1000/
+            │   └── cachegrind_opt_inline_block40_n1000
+            ├── n1200/
+            │   └── cachegrind_opt_inline_block40_n1200
+            ├── n1400/
+            │   ├── cachegrind_opt_inline_block40_n1400
+            ├── n400/
+            │   └── cachegrind_opt_inline_block40_n400
+            ├── n600/
+            │   └── cachegrind_opt_inline_block40_n600
+            └── n800/
+                └── cachegrind_opt_inline_block40_n800
+Note:
+- For the `opt_inline` version I have tested 3 different block sizes for the tiled matrix multiplication (24, 32 and 40) in order to confirm that 32 is the optimal block size for the L1 cache of the CPU I am working with. The theoretical optimal block size for the L1 cache is 32 as computed by the formula `sqrt(L1_cache_size / (3 * sizeof(double)))`, rounded down to the nearest multiple of 8 (the size of a cache line).
+- The cachegrind output for the unoptimized versions (`neopt` and `neopt_equiv`), for N = {1400, 1200} may be truncated due to the long execution times. If any cachegrind or benchmark data appears inconsistent, truncated, or clearly invalid (especially for large N in unoptimized versions), you should explicitly exclude those data points from graphs and clearly mention this decision in the report.
+
+The `bench_results` files contain a csv table with the following format:
+```N,runs,mean,stddev,min,max,p50,p90,p99```
+
+Where:
+- `N` is the size of the input matrices.
+- `runs` is the number of times the algorithm was executed for that particular input size.
+- `mean` is the average execution time across all runs.
+- `stddev` is the standard deviation of the execution times.
+- `min` is the minimum execution time recorded.
+- `max` is the maximum execution time recorded.
+- `p50` is the 50th percentile (median) of the execution times.
+- `p90` is the 90th percentile of the execution times.
+- `p99` is the 99th percentile of the execution times.
+
+All time values are in nanoseconds.
+
+For all runtime-related graphs and comparisons, use the `mean` execution time as the primary metric. You may optionally include `p50` or `p90` for additional insights, but all main comparisons must be based on the mean to ensure consistency.
+
+All benchmarks were run with the following command:
+
+```bash
+<bench_program> -n <N> -s 1234 -w 10 -t 30 -a 16
+```
+
+Where:
+- `<bench_program>` is the path to the benchmark executable for the respective algorithm version.
+- `-n <N>` specifies the size of the input matrices.
+- `-s 1234` sets the seed for random number generation to ensure reproducibility.
+- `-w 10` indicates that the benchmark should perform 10 warm-up runs before recording execution times.
+- `-t 30` specifies that the benchmark should run for a total of 30 runs to gather performance data.
+- `-a 16` indicates that the benchmark should be pinned to the cpu core with ID 16 to minimize variability due to scheduling across different cores.
+
+The `cachegrind_<version>_n<N>` files contain the `cg_annotate` annotation of the cachegrind output for the respective algorithm version and input size. The valgrind command used to generate the cachegrind output was the following:
+
+```
+valgrind --tool=cachegrind --branch-sim=yes --cache-sim=yes --I1=32768,8,64 --D1=32768,8,64 --LL=20971520,20,64 <benchmark_command>
+```
+
+Where `<benchmark_command>` is:
+```
+<bench_program> -n <N> -s 1234 -t 1 -a 16
+```
+
+When parsing the cachegrind annotation files, use the `cg_annotate` outputs. From these files, extract and use the following metrics:
+- I refs
+- D refs
+- D1 misses
+- LL misses
+- Branches
+- Mispredicted branches
+- Any other relevant metrics
+
+These metrics should be consistently extracted for all implementations and all input sizes where valid data is available.
+
+Now your job is to inspect the source code of each implementation and the performance data collected. Then write the report in a separate markdown file named `REPORT.md` at the root of the project where you explain how the changes made in the optimized version(s) affect the performance of the algorithm, supported by the performance data collected. Use all available input sizes (N values) from the dataset when generating graphs, unless specific data points are excluded due to inconsistencies. The analysis should first start by showing how each optimization step improved the performance and support it by data and graphs. The flow of the improvements should be: `neopt_equiv -> opt_base -> opt_inline -> opt_inline_block<BLOCK_SIZE> -> opt_avx`. Important: The step-by-step optimization analysis must be based on `neopt_equiv`, not `neopt`, since it preserves the same computation structure and time complexity as the optimized versions. The `neopt` version should only be used in the final overall comparison section. After that, the last part of the report should be a final comparison between all versions, including the blas version, the `neopt` version, the `neopt_equiv` version and the `opt_avx` version. Do not forget: each comparison should be supported by data and graphs. For each graph and comparison, you must not only present the data but also interpret it. Explain why the observed differences occur, relating them to factors such as cache locality, memory access patterns, instruction count, branching behavior, and SIMD/vectorization where applicable. Where possible, correlate low-level metrics (cache misses, instruction count, branches) with the observed execution time in order to explain the performance differences more rigorously. In the `REPORT.md` file, you should link the graphs you generated in the `graphs/` directory to support your analysis.
+
+For the graphs, you should write python scripts that generate the corresponding graphs in svg format and save them in the `graphs/` directory. You do not have to run the scripts to generate the graphs, just write the scripts. The graphs should be well-structured and grouped logically. At minimum, include:
+- A runtime comparison graph across implementations
+- Graphs showing the evolution of performance across optimization steps
+- Graphs for cache-related metrics (e.g., D1 misses, LL misses)
+- Graphs for instruction and branch-related metrics
+
+Avoid overcrowding graphs; if necessary, split them into multiple clear and readable figures.
+Avoid generating redundant graphs; each graph should provide distinct and meaningful insight into the performance characteristics.
+The graphs should be clear and readable, with proper labels and legends. In case the compared values are way too large to be displayed in a single graph, you can use a logarithmic scale for the y-axis.
+
