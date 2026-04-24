@@ -1,0 +1,27 @@
+==1722683== Cachegrind, a high-precision tracing profiler
+==1722683== Copyright (C) 2002-2024, and GNU GPL'd, by Nicholas Nethercote et al.
+==1722683== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
+==1722683== Command: ./tema1_opt_m ../input/input_valgrind
+==1722683== Parent PID: 1722552
+==1722683== 
+--1722683-- warning: L3 cache found, using its data for the LL simulation.
+==1722683== 
+==1722683== I refs:        303,917,902
+==1722683== I1  misses:            728
+==1722683== LLi misses:            713
+==1722683== I1  miss rate:        0.00%
+==1722683== LLi miss rate:        0.00%
+==1722683== 
+==1722683== D refs:        147,471,850  (113,434,847 rd   + 34,037,003 wr)
+==1722683== D1  misses:      5,863,571  (  5,813,043 rd   +     50,528 wr)
+==1722683== LLd misses:         70,857  (     20,437 rd   +     50,420 wr)
+==1722683== D1  miss rate:         4.0% (        5.1%     +        0.1%  )
+==1722683== LLd miss rate:         0.0% (        0.0%     +        0.1%  )
+==1722683== 
+==1722683== LL refs:         5,864,299  (  5,813,771 rd   +     50,528 wr)
+==1722683== LL misses:          71,570  (     21,150 rd   +     50,420 wr)
+==1722683== LL miss rate:          0.0% (        0.0%     +        0.1%  )
+==1722683== 
+==1722683== Branches:       16,086,818  ( 15,766,266 cond +    320,552 ind)
+==1722683== Mispredicts:       396,621  (    396,565 cond +         56 ind)
+==1722683== Mispred rate:          2.5% (        2.5%     +        0.0%   )
