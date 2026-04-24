@@ -92,21 +92,13 @@ vec_dot(int N, const double *A, const double *B) {
 // Y = alpha * X + Y
 __attribute__((always_inline, optimize("O3"))) static inline void
 vec_axpy(int N, double alpha, const double *X, double *Y) {
-  const __m256d alpha_vec = _mm256_set1_pd(alpha);
+  register const __m256d alpha_vec = _mm256_set1_pd(alpha);
 
   const int limit = (N / 32) * 32;
   {
     register double *y_ptr = Y;
     register const double *x_ptr = X;
     for (register int i = 0; i < limit; i += 32, y_ptr += 32, x_ptr += 32) {
-      register const __m256d x_vec1 = _mm256_loadu_pd(x_ptr);
-      register const __m256d x_vec2 = _mm256_loadu_pd(x_ptr + 4);
-      register const __m256d x_vec3 = _mm256_loadu_pd(x_ptr + 8);
-      register const __m256d x_vec4 = _mm256_loadu_pd(x_ptr + 12);
-      register const __m256d x_vec5 = _mm256_loadu_pd(x_ptr + 16);
-      register const __m256d x_vec6 = _mm256_loadu_pd(x_ptr + 20);
-      register const __m256d x_vec7 = _mm256_loadu_pd(x_ptr + 24);
-      register const __m256d x_vec8 = _mm256_loadu_pd(x_ptr + 28);
 
       register __m256d y_vec1 = _mm256_loadu_pd(y_ptr);
       register __m256d y_vec2 = _mm256_loadu_pd(y_ptr + 4);
@@ -117,14 +109,14 @@ vec_axpy(int N, double alpha, const double *X, double *Y) {
       register __m256d y_vec7 = _mm256_loadu_pd(y_ptr + 24);
       register __m256d y_vec8 = _mm256_loadu_pd(y_ptr + 28);
 
-      y_vec1 = _mm256_fmadd_pd(alpha_vec, x_vec1, y_vec1);
-      y_vec2 = _mm256_fmadd_pd(alpha_vec, x_vec2, y_vec2);
-      y_vec3 = _mm256_fmadd_pd(alpha_vec, x_vec3, y_vec3);
-      y_vec4 = _mm256_fmadd_pd(alpha_vec, x_vec4, y_vec4);
-      y_vec5 = _mm256_fmadd_pd(alpha_vec, x_vec5, y_vec5);
-      y_vec6 = _mm256_fmadd_pd(alpha_vec, x_vec6, y_vec6);
-      y_vec7 = _mm256_fmadd_pd(alpha_vec, x_vec7, y_vec7);
-      y_vec8 = _mm256_fmadd_pd(alpha_vec, x_vec8, y_vec8);
+      y_vec1 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr), y_vec1);
+      y_vec2 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 4), y_vec2);
+      y_vec3 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 8), y_vec3);
+      y_vec4 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 12), y_vec4);
+      y_vec5 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 16), y_vec5);
+      y_vec6 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 20), y_vec6);
+      y_vec7 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 24), y_vec7);
+      y_vec8 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 28), y_vec8);
 
       _mm256_storeu_pd(y_ptr, y_vec1);
       _mm256_storeu_pd(y_ptr + 4, y_vec2);
@@ -143,45 +135,45 @@ vec_axpy(int N, double alpha, const double *X, double *Y) {
 }
 
 
-// X = X + Y
+// Y = X + Y
 __attribute__((always_inline, optimize("O3"))) static inline void
-vec_add(int N, double *X, const double *Y) {
+vec_add(int N, const double *X, double *Y) {
   const int limit = (N / 32) * 32;
   {
-    register double *x_ptr = X;
-    register const double *y_ptr = Y;
+    register double *y_ptr = Y;
+    register const double *x_ptr = X;
     for (register int i = 0; i < limit; i += 32, x_ptr += 32, y_ptr += 32) {
-      register __m256d x_vec1 = _mm256_loadu_pd(x_ptr);
-      register __m256d x_vec2 = _mm256_loadu_pd(x_ptr + 4);
-      register __m256d x_vec3 = _mm256_loadu_pd(x_ptr + 8);
-      register __m256d x_vec4 = _mm256_loadu_pd(x_ptr + 12);
-      register __m256d x_vec5 = _mm256_loadu_pd(x_ptr + 16);
-      register __m256d x_vec6 = _mm256_loadu_pd(x_ptr + 20);
-      register __m256d x_vec7 = _mm256_loadu_pd(x_ptr + 24);
-      register __m256d x_vec8 = _mm256_loadu_pd(x_ptr + 28);
+      register __m256d y_vec1 = _mm256_loadu_pd(y_ptr);
+      register __m256d y_vec2 = _mm256_loadu_pd(y_ptr + 4);
+      register __m256d y_vec3 = _mm256_loadu_pd(y_ptr + 8);
+      register __m256d y_vec4 = _mm256_loadu_pd(y_ptr + 12);
+      register __m256d y_vec5 = _mm256_loadu_pd(y_ptr + 16);
+      register __m256d y_vec6 = _mm256_loadu_pd(y_ptr + 20);
+      register __m256d y_vec7 = _mm256_loadu_pd(y_ptr + 24);
+      register __m256d y_vec8 = _mm256_loadu_pd(y_ptr + 28);
 
-      x_vec1 = _mm256_add_pd(x_vec1, _mm256_loadu_pd(y_ptr));
-      x_vec2 = _mm256_add_pd(x_vec2, _mm256_loadu_pd(y_ptr + 4));
-      x_vec3 = _mm256_add_pd(x_vec3, _mm256_loadu_pd(y_ptr + 8));
-      x_vec4 = _mm256_add_pd(x_vec4, _mm256_loadu_pd(y_ptr + 12));
-      x_vec5 = _mm256_add_pd(x_vec5, _mm256_loadu_pd(y_ptr + 16));
-      x_vec6 = _mm256_add_pd(x_vec6, _mm256_loadu_pd(y_ptr + 20));
-      x_vec7 = _mm256_add_pd(x_vec7, _mm256_loadu_pd(y_ptr + 24));
-      x_vec8 = _mm256_add_pd(x_vec8, _mm256_loadu_pd(y_ptr + 28));
+      y_vec1 = _mm256_add_pd(y_vec1, _mm256_loadu_pd(x_ptr));
+      y_vec2 = _mm256_add_pd(y_vec2, _mm256_loadu_pd(x_ptr + 4));
+      y_vec3 = _mm256_add_pd(y_vec3, _mm256_loadu_pd(x_ptr + 8));
+      y_vec4 = _mm256_add_pd(y_vec4, _mm256_loadu_pd(x_ptr + 12));
+      y_vec5 = _mm256_add_pd(y_vec5, _mm256_loadu_pd(x_ptr + 16));
+      y_vec6 = _mm256_add_pd(y_vec6, _mm256_loadu_pd(x_ptr + 20));
+      y_vec7 = _mm256_add_pd(y_vec7, _mm256_loadu_pd(x_ptr + 24));
+      y_vec8 = _mm256_add_pd(y_vec8, _mm256_loadu_pd(x_ptr + 28));
 
-      _mm256_storeu_pd(x_ptr, x_vec1);
-      _mm256_storeu_pd(x_ptr + 4, x_vec2);
-      _mm256_storeu_pd(x_ptr + 8, x_vec3);
-      _mm256_storeu_pd(x_ptr + 12, x_vec4);
-      _mm256_storeu_pd(x_ptr + 16, x_vec5);
-      _mm256_storeu_pd(x_ptr + 20, x_vec6);
-      _mm256_storeu_pd(x_ptr + 24, x_vec7);
-      _mm256_storeu_pd(x_ptr + 28, x_vec8);
+      _mm256_storeu_pd(y_ptr, y_vec1);
+      _mm256_storeu_pd(y_ptr + 4, y_vec2);
+      _mm256_storeu_pd(y_ptr + 8, y_vec3);
+      _mm256_storeu_pd(y_ptr + 12, y_vec4);
+      _mm256_storeu_pd(y_ptr + 16, y_vec5);
+      _mm256_storeu_pd(y_ptr + 20, y_vec6);
+      _mm256_storeu_pd(y_ptr + 24, y_vec7);
+      _mm256_storeu_pd(y_ptr + 28, y_vec8);
     }
   }
 
   for (register int i = limit; i < N; ++i) {
-    X[i] += Y[i];
+    Y[i] += X[i];
   }
 } 
 
@@ -379,7 +371,7 @@ double *my_solver(int N, double *A, double *B, double *x) {
     for (register int i = 1; i < N; ++i, c_rowa_ptr += N, c_rowb_ptr += N) {
 
       // C[i * N + j] += C[(i - 1) * N + j];
-      vec_add(N, c_rowb_ptr, c_rowa_ptr);
+      vec_add(N, c_rowa_ptr, c_rowb_ptr);
     }
   }
 
