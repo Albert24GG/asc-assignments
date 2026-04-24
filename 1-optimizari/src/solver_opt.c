@@ -4,7 +4,6 @@
  */
 #include "utils.h"
 #include <immintrin.h>
-#include <stddef.h>
 #include <string.h>
 
 #define MIN(a, b)                                                              \
@@ -22,15 +21,162 @@
  * Add your optimized implementation here
  */
 
-__attribute__((always_inline)) static inline double
+__attribute__((always_inline, optimize("O3"))) static inline double
+reduce_vec(__m256d vec) {
+  register __m128d upper = _mm256_extractf128_pd(vec, 1);
+  register __m128d lower = _mm256_castpd256_pd128(vec);
+
+  register __m128d partial_sum = _mm_add_pd(upper, lower);
+  register __m128d partial_sum_high = _mm_unpackhi_pd(partial_sum, partial_sum);
+  register __m128d result = _mm_add_sd(partial_sum, partial_sum_high);
+
+  return _mm_cvtsd_f64(result);
+}
+
+__attribute__((always_inline, optimize("O3"))) static inline double
 vec_dot(int N, const double *A, const double *B) {
-  register double sum = 0;
-  for (register int i = 0; i < N; ++i) {
-    sum += A[i] * B[i];
+  // N is a multiple of 40
+  register __m256d sum_vec1 = _mm256_setzero_pd();
+  register __m256d sum_vec2 = _mm256_setzero_pd();
+  register __m256d sum_vec3 = _mm256_setzero_pd();
+  register __m256d sum_vec4 = _mm256_setzero_pd();
+  register __m256d sum_vec5 = _mm256_setzero_pd();
+  register __m256d sum_vec6 = _mm256_setzero_pd();
+  register __m256d sum_vec7 = _mm256_setzero_pd();
+  register __m256d sum_vec8 = _mm256_setzero_pd();
+
+  const int limit = (N / 32) * 32;
+  {
+    register const double *a_ptr = A;
+    register const double *b_ptr = B;
+    for (register int i = 0; i < limit; i += 32, a_ptr += 32, b_ptr += 32) {
+      // sum += A[i] * B[i];
+      register const __m256d a_vec1 = _mm256_loadu_pd(a_ptr);
+      register const __m256d a_vec2 = _mm256_loadu_pd(a_ptr + 4);
+      register const __m256d a_vec3 = _mm256_loadu_pd(a_ptr + 8);
+      register const __m256d a_vec4 = _mm256_loadu_pd(a_ptr + 12);
+      register const __m256d a_vec5 = _mm256_loadu_pd(a_ptr + 16);
+      register const __m256d a_vec6 = _mm256_loadu_pd(a_ptr + 20);
+      register const __m256d a_vec7 = _mm256_loadu_pd(a_ptr + 24);
+      register const __m256d a_vec8 = _mm256_loadu_pd(a_ptr + 28);
+
+      sum_vec1 = _mm256_fmadd_pd(a_vec1, _mm256_loadu_pd(b_ptr), sum_vec1);
+      sum_vec2 = _mm256_fmadd_pd(a_vec2, _mm256_loadu_pd(b_ptr + 4), sum_vec2);
+      sum_vec3 = _mm256_fmadd_pd(a_vec3, _mm256_loadu_pd(b_ptr + 8), sum_vec3);
+      sum_vec4 = _mm256_fmadd_pd(a_vec4, _mm256_loadu_pd(b_ptr + 12), sum_vec4);
+      sum_vec5 = _mm256_fmadd_pd(a_vec5, _mm256_loadu_pd(b_ptr + 16), sum_vec5);
+      sum_vec6 = _mm256_fmadd_pd(a_vec6, _mm256_loadu_pd(b_ptr + 20), sum_vec6);
+      sum_vec7 = _mm256_fmadd_pd(a_vec7, _mm256_loadu_pd(b_ptr + 24), sum_vec7);
+      sum_vec8 = _mm256_fmadd_pd(a_vec8, _mm256_loadu_pd(b_ptr + 28), sum_vec8);
+    }
   }
 
-  return sum;
+  sum_vec1 = _mm256_add_pd(sum_vec1, sum_vec2);
+  sum_vec3 = _mm256_add_pd(sum_vec3, sum_vec4);
+  sum_vec5 = _mm256_add_pd(sum_vec5, sum_vec6);
+  sum_vec7 = _mm256_add_pd(sum_vec7, sum_vec8);
+
+  sum_vec1 = _mm256_add_pd(sum_vec1, sum_vec3);
+  sum_vec5 = _mm256_add_pd(sum_vec5, sum_vec7);
+
+  sum_vec1 = _mm256_add_pd(sum_vec1, sum_vec5);
+
+  register double result = reduce_vec(sum_vec1);
+  for (register int i = limit; i < N; ++i) {
+    result += A[i] * B[i];
+  }
+
+  return result;
 }
+
+// Y = alpha * X + Y
+__attribute__((always_inline, optimize("O3"))) static inline void
+vec_axpy(int N, double alpha, const double *X, double *Y) {
+  register const __m256d alpha_vec = _mm256_set1_pd(alpha);
+
+  const int limit = (N / 32) * 32;
+  {
+    register double *y_ptr = Y;
+    register const double *x_ptr = X;
+    for (register int i = 0; i < limit; i += 32, y_ptr += 32, x_ptr += 32) {
+
+      register __m256d y_vec1 = _mm256_loadu_pd(y_ptr);
+      register __m256d y_vec2 = _mm256_loadu_pd(y_ptr + 4);
+      register __m256d y_vec3 = _mm256_loadu_pd(y_ptr + 8);
+      register __m256d y_vec4 = _mm256_loadu_pd(y_ptr + 12);
+      register __m256d y_vec5 = _mm256_loadu_pd(y_ptr + 16);
+      register __m256d y_vec6 = _mm256_loadu_pd(y_ptr + 20);
+      register __m256d y_vec7 = _mm256_loadu_pd(y_ptr + 24);
+      register __m256d y_vec8 = _mm256_loadu_pd(y_ptr + 28);
+
+      y_vec1 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr), y_vec1);
+      y_vec2 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 4), y_vec2);
+      y_vec3 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 8), y_vec3);
+      y_vec4 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 12), y_vec4);
+      y_vec5 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 16), y_vec5);
+      y_vec6 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 20), y_vec6);
+      y_vec7 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 24), y_vec7);
+      y_vec8 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 28), y_vec8);
+
+      _mm256_storeu_pd(y_ptr, y_vec1);
+      _mm256_storeu_pd(y_ptr + 4, y_vec2);
+      _mm256_storeu_pd(y_ptr + 8, y_vec3);
+      _mm256_storeu_pd(y_ptr + 12, y_vec4);
+      _mm256_storeu_pd(y_ptr + 16, y_vec5);
+      _mm256_storeu_pd(y_ptr + 20, y_vec6);
+      _mm256_storeu_pd(y_ptr + 24, y_vec7);
+      _mm256_storeu_pd(y_ptr + 28, y_vec8);
+    }
+  }
+
+  for (register int i = limit; i < N; ++i) {
+    Y[i] += alpha * X[i];
+  }
+}
+
+
+// Y = X + Y
+__attribute__((always_inline, optimize("O3"))) static inline void
+vec_add(int N, const double *X, double *Y) {
+  const int limit = (N / 32) * 32;
+  {
+    register double *y_ptr = Y;
+    register const double *x_ptr = X;
+    for (register int i = 0; i < limit; i += 32, x_ptr += 32, y_ptr += 32) {
+      register __m256d y_vec1 = _mm256_loadu_pd(y_ptr);
+      register __m256d y_vec2 = _mm256_loadu_pd(y_ptr + 4);
+      register __m256d y_vec3 = _mm256_loadu_pd(y_ptr + 8);
+      register __m256d y_vec4 = _mm256_loadu_pd(y_ptr + 12);
+      register __m256d y_vec5 = _mm256_loadu_pd(y_ptr + 16);
+      register __m256d y_vec6 = _mm256_loadu_pd(y_ptr + 20);
+      register __m256d y_vec7 = _mm256_loadu_pd(y_ptr + 24);
+      register __m256d y_vec8 = _mm256_loadu_pd(y_ptr + 28);
+
+      y_vec1 = _mm256_add_pd(y_vec1, _mm256_loadu_pd(x_ptr));
+      y_vec2 = _mm256_add_pd(y_vec2, _mm256_loadu_pd(x_ptr + 4));
+      y_vec3 = _mm256_add_pd(y_vec3, _mm256_loadu_pd(x_ptr + 8));
+      y_vec4 = _mm256_add_pd(y_vec4, _mm256_loadu_pd(x_ptr + 12));
+      y_vec5 = _mm256_add_pd(y_vec5, _mm256_loadu_pd(x_ptr + 16));
+      y_vec6 = _mm256_add_pd(y_vec6, _mm256_loadu_pd(x_ptr + 20));
+      y_vec7 = _mm256_add_pd(y_vec7, _mm256_loadu_pd(x_ptr + 24));
+      y_vec8 = _mm256_add_pd(y_vec8, _mm256_loadu_pd(x_ptr + 28));
+
+      _mm256_storeu_pd(y_ptr, y_vec1);
+      _mm256_storeu_pd(y_ptr + 4, y_vec2);
+      _mm256_storeu_pd(y_ptr + 8, y_vec3);
+      _mm256_storeu_pd(y_ptr + 12, y_vec4);
+      _mm256_storeu_pd(y_ptr + 16, y_vec5);
+      _mm256_storeu_pd(y_ptr + 20, y_vec6);
+      _mm256_storeu_pd(y_ptr + 24, y_vec7);
+      _mm256_storeu_pd(y_ptr + 28, y_vec8);
+    }
+  }
+
+  for (register int i = limit; i < N; ++i) {
+    Y[i] += X[i];
+  }
+} 
+
 
 __attribute__((always_inline)) static inline void
 compute_block(int N, const double *a_t_ptr, const double *b_ptr,
@@ -47,132 +193,113 @@ compute_block(int N, const double *a_t_ptr, const double *b_ptr,
 
     for (register int i = 0; i < BLOCK_SIZE;
          ++i, local2_c_ptr += N, ++local3_a_t_ptr) {
+      // C[i * N + j] += A[k * N + i] * B[k * N + j];
+      vec_axpy(BLOCK_SIZE, *local3_a_t_ptr, local2_b_ptr, local2_c_ptr);
+    }
+  }
+}
 
-      register const double *local3_b_ptr = local2_b_ptr;
-      register double *local3_c_ptr = local2_c_ptr;
+__attribute__((always_inline)) static inline void
+remaining_main(int N, const double *A, const double *B, double *C) {
+  register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
+  register const double *a_t_ptr = A + limit * N;
+  register const double *b_ptr = B + limit * N;
 
-      register const double a_t_val = *local3_a_t_ptr;
+  for (register int k = limit; k < N; ++k, a_t_ptr += N, b_ptr += N) {
 
-      for (register int j = 0; j < BLOCK_SIZE;
-           ++j, ++local3_c_ptr, ++local3_b_ptr) {
-        *local3_c_ptr += a_t_val * *local3_b_ptr;
+    register double *c_ptr = C;
+
+    register const double *local_a_t_ptr = a_t_ptr;
+
+    for (register int i = 0; i < limit; ++i, c_ptr += N, ++local_a_t_ptr) {
+
+      register const double a_t_val = *local_a_t_ptr;
+      // register const double a_t_val = A[k * N + i];
+
+      register double *local_c_ptr = c_ptr;
+      register const double *local_b_ptr = b_ptr;
+
+      // C[i * N + j] += A[k * N + i] * B[k * N + j];
+      for (register int j = 0; j < limit; ++j, ++local_c_ptr, ++local_b_ptr) {
+        *local_c_ptr += a_t_val * *local_b_ptr;
       }
     }
   }
 }
 
+__attribute__((always_inline)) static inline void
+remaining_bottom(int N, const double *A, const double *B, double *C) {
+  register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
+  register const double *a_t_ptr = A + limit;
+  register const double *b_ptr = B;
 
-__attribute__((always_inline)) static inline void remaining_main(int N, const double *A, const double *B, double *C) 
-{
-    register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
-    register const double *a_t_ptr = A + limit * N;
-    register const double *b_ptr = B + limit * N;
+  for (register int k = 0; k < N; ++k, a_t_ptr += N, b_ptr += N) {
 
-    for (register int k = limit; k < N; ++k, a_t_ptr += N, b_ptr += N) {
+    register double *c_ptr = C + limit * N;
 
-      register double *c_ptr = C;
+    register const double *local_a_t_ptr = a_t_ptr;
 
-      register const double *local_a_t_ptr = a_t_ptr;
+    for (register int i = limit; i < N; ++i, c_ptr += N, ++local_a_t_ptr) {
+      // C[i * N + j] += A[k * N + i] * B[k * N + j];
+      vec_axpy(N, *local_a_t_ptr, b_ptr, c_ptr);
+    }
+  }
+}
 
-      for (register int i = 0; i < limit; ++i, c_ptr += N, ++local_a_t_ptr) {
+__attribute__((always_inline)) static inline void
+remaining_right(int N, const double *A, const double *B, double *C) {
+  register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
+  register const double *a_t_ptr = A;
+  register const double *b_ptr = B + limit;
 
-        register const double a_t_val = *local_a_t_ptr;
-        // register const double a_t_val = A[k * N + i];
+  for (register int k = 0; k < N; ++k, a_t_ptr += N, b_ptr += N) {
 
-        register double *local_c_ptr = c_ptr;
-        register const double *local_b_ptr = b_ptr;
+    register double *c_ptr = C + limit;
 
-        for (register int j = 0; j < limit; ++j, ++local_c_ptr, ++local_b_ptr) {
-          // C[i * N + j] += a_t_val * B[k * N + j];
-          *local_c_ptr += a_t_val * *local_b_ptr;
-        }
+    register const double *local_a_t_ptr = a_t_ptr;
+
+    for (register int i = 0; i < limit; ++i, c_ptr += N, ++local_a_t_ptr) {
+
+      register const double a_t_val = *local_a_t_ptr;
+
+      register double *local_c_ptr = c_ptr;
+      register const double *local_b_ptr = b_ptr;
+
+      // C[i * N + j] += A[k * N + i] * B[k * N + j];
+      for (register int j = limit; j < N; ++j, ++local_c_ptr, ++local_b_ptr) {
+        *local_c_ptr += a_t_val * *local_b_ptr;
       }
     }
   }
+}
 
-__attribute__((always_inline)) static inline void remaining_bottom(int N, const double *A, const double *B, double *C) 
-{
-    register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
-    register const double *a_t_ptr = A + limit;
-    register const double *b_ptr = B;
+__attribute__((always_inline)) static inline void
+main_block(int N, const double *A, const double *B, double *C) {
+  register const int blocks_per_line = N / BLOCK_SIZE;
+  register const double *a_t_ptr = A;
+  register const double *b_ptr = B;
 
-    for (register int k = 0; k < N; ++k, a_t_ptr += N, b_ptr += N) {
+  for (register int bk = 0; bk < blocks_per_line;
+       ++bk, a_t_ptr += BLOCK_SIZE * N, b_ptr += BLOCK_SIZE * N) {
 
-      register double *c_ptr = C + limit * N;
+    register double *c_ptr = C;
 
-      register const double *local_a_t_ptr = a_t_ptr;
+    register const double *local_a_t_ptr = a_t_ptr;
 
-      for (register int i = limit; i < N; ++i, c_ptr += N, ++local_a_t_ptr) {
+    for (register int bi = 0; bi < blocks_per_line;
+         ++bi, local_a_t_ptr += BLOCK_SIZE, c_ptr += BLOCK_SIZE * N) {
 
-        register const double a_t_val = *local_a_t_ptr;
+      register double *local_c_ptr = c_ptr;
 
-        register double *local_c_ptr = c_ptr;
-        register const double *local_b_ptr = b_ptr;
+      register const double *local_b_ptr = b_ptr;
+      for (register int bj = 0; bj < blocks_per_line;
+           ++bj, local_b_ptr += BLOCK_SIZE, local_c_ptr += BLOCK_SIZE) {
 
-        for (register int j = 0; j < N; ++j, ++local_c_ptr, ++local_b_ptr) {
-          // C[i * N + j] += A[k * N + i] * B[k * N + j];
-          *local_c_ptr += a_t_val * *local_b_ptr;
-        }
+        compute_block(N, local_a_t_ptr, local_b_ptr, local_c_ptr);
       }
     }
   }
-
-__attribute__((always_inline)) static inline void remaining_right(int N, const double *A, const double *B, double *C) 
-{
-    register const int limit = (N / BLOCK_SIZE) * BLOCK_SIZE;
-    register const double *a_t_ptr = A;
-    register const double *b_ptr = B + limit;
-
-    for (register int k = 0; k < N; ++k, a_t_ptr += N, b_ptr += N) {
-
-      register double *c_ptr = C + limit;
-
-      register const double *local_a_t_ptr = a_t_ptr;
-
-      for (register int i = 0; i < limit; ++i, c_ptr += N, ++local_a_t_ptr) {
-
-        register const double a_t_val = *local_a_t_ptr;
-
-        register double *local_c_ptr = c_ptr;
-        register const double *local_b_ptr = b_ptr;
-
-        for (register int j = limit; j < N; ++j, ++local_c_ptr, ++local_b_ptr) {
-          // C[i * N + j] += A[k * N + i] * B[k * N + j];
-          *local_c_ptr += a_t_val * *local_b_ptr;
-        }
-      }
-    }
-  }
-
-
-__attribute__((always_inline)) static inline void main_block(int N, const double *A, const double *B, double *C) 
-{
-    register const int blocks_per_line = N / BLOCK_SIZE;
-    register const double *a_t_ptr = A;
-    register const double *b_ptr = B;
-
-    for (register int bk = 0; bk < blocks_per_line;
-         ++bk, a_t_ptr += BLOCK_SIZE * N, b_ptr += BLOCK_SIZE * N) {
-
-      register double *c_ptr = C;
-
-      register const double *local_a_t_ptr = a_t_ptr;
-
-      for (register int bi = 0; bi < blocks_per_line;
-           ++bi, local_a_t_ptr += BLOCK_SIZE, c_ptr += BLOCK_SIZE * N) {
-
-        register double *local_c_ptr = c_ptr;
-
-        register const double *local_b_ptr = b_ptr;
-        for (register int bj = 0; bj < blocks_per_line;
-             ++bj, local_b_ptr += BLOCK_SIZE, local_c_ptr += BLOCK_SIZE) {
-
-          compute_block(N, local_a_t_ptr, local_b_ptr, local_c_ptr);
-        }
-      }
-    }
-  }
-
+}
 
 __attribute__((always_inline)) static inline void
 bmm_kij(int N, const double *A, const double *B, double *C) {
@@ -196,19 +323,20 @@ bmm_kij(int N, const double *A, const double *B, double *C) {
 
 double *my_solver(int N, double *A, double *B, double *x) {
 
-  // align to 16 bytes
-  const int c_aligned_size = (N * N + 0xF) & ~0xF;
-  const int d_aligned_size = (N * (N + 1) / 2 + 0xF) & ~0xF;
+  // align to 32 bytes
+  const int c_aligned_size = (N * N + 0x1F) & ~0x1F;
+  const int d_aligned_size = (N * (N + 1) / 2 + 0x1F) & ~0x1F;
 
-  register double *_data =
-      calloc(c_aligned_size + d_aligned_size, sizeof(double));
+  double *_data;
+  posix_memalign((void **)&_data, 32,
+                 (c_aligned_size + d_aligned_size) * sizeof(double));
 
-  register double *C = _data;
+  double *C = _data;
 
   // blocked matrix multiplication
   bmm_kij(N, A, B, C);
 
-  register double *d = C + c_aligned_size;
+  double *d = C + c_aligned_size;
   // d = c * c^T
 
   // consider c is made of rows c_0, c_1, ..., c_{N-1}
@@ -230,7 +358,7 @@ double *my_solver(int N, double *A, double *B, double *x) {
     }
   }
 
-  register double *y = malloc(N * sizeof(double));
+  double *y = malloc(N * sizeof(double));
   memcpy(y, x, N * sizeof(double));
 
   // d * c_0 + d * c_1 + ... + d * c_{N-1} = d * (c_0 + c_1 + ... + c_{N-1})
@@ -240,13 +368,10 @@ double *my_solver(int N, double *A, double *B, double *x) {
     register const double *c_rowa_ptr = C;
     register double *c_rowb_ptr = C + N;
 
-    for (register int i = 1; i < N; ++i) {
+    for (register int i = 1; i < N; ++i, c_rowa_ptr += N, c_rowb_ptr += N) {
 
-      // assume N is a multiple of 4, otherwise here should be a switch with 4
-      // cases for the remaining elements
-      for (register int j = 0; j < N; ++j, ++c_rowa_ptr, ++c_rowb_ptr) {
-        *c_rowb_ptr += *c_rowa_ptr;
-      }
+      // C[i * N + j] += C[(i - 1) * N + j];
+      vec_add(N, c_rowa_ptr, c_rowb_ptr);
     }
   }
 
