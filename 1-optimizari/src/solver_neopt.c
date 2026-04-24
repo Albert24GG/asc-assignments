@@ -3,13 +3,12 @@
  * 2026 Spring
  */
 #include "utils.h"
-#include <string.h>
 
 /*
  * Add your unoptimized implementation here
  */
 
-void fill_with_transpose(int N, double *A, double *B) {
+void fill_with_transpose(int N, const double *A, double *B) {
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
       B[i * N + j] = A[j * N + i];
@@ -17,26 +16,31 @@ void fill_with_transpose(int N, double *A, double *B) {
   }
 }
 
-void matrix_mult_upper(int N, double *A, double *B, double *C) {
+void matrix_mult_upper(int N, const double *A, const double *B, double *C) {
   for (int i = 0; i < N; ++i) {
     for (int j = i; j < N; ++j) {
-      double sum = 0;
       for (int k = 0; k < N; ++k) {
-        sum += A[i * N + k] * B[k * N + j];
+        C[i * N + j] += A[i * N + k] * B[k * N + j];
       }
-      C[i * N + j] = sum;
     }
   }
 }
 
-void matrix_mult(int N, double *A, double *B, double *C) {
+void matrix_mult(int N, const double *A, const double *B, double *C) {
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
-      double sum = 0;
       for (int k = 0; k < N; ++k) {
-        sum += A[i * N + k] * B[k * N + j];
+        C[i * N + j] += A[i * N + k] * B[k * N + j];
       }
-      C[i * N + j] = sum;
+    }
+  }
+}
+
+// Y = M * X + Y
+void mat_vec_mult(int N, const double *M, const double *X, double *Y) {
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      Y[i] += M[i * N + j] * X[j];
     }
   }
 }
@@ -60,31 +64,25 @@ double *my_solver(int N, double *A, double *B, double *x) {
   matrix_mult_upper(N, c, aux, d);
 
   double *y = calloc(N, sizeof(double));
-  double *sum_rows_c = aux;
-  memset(sum_rows_c, 0, N * sizeof(double));
 
-  // d * c_0 + d * c_1 + ... + d * c_{N-1} = d * (c_0 + c_1 + ... + c_{N-1})
-  // so we compute sum_rows_c = c_0 + c_1 + ... + c_{N-1} and then we do d *
-  // sum_rows_c
-  for (int i = 0; i < N; ++i) {
-    for (int j = 0; j < N; ++j) {
-      sum_rows_c[j] += c[i * N + j];
+  const double *c_row_ptr = c;
+  for (int rowc = 0; rowc < N; ++rowc, c_row_ptr += N) {
+
+    for (int i = 0; i < N; ++i) {
+      y[i] += d[i * N + i] * c_row_ptr[i];
+
+      for (int j = i + 1; j < N; ++j) {
+        double d_val = d[i * N + j];
+        // since d is symmetric, we have d[j * N + i] = d[i * N + j], we can
+        // perform the update for both elements at the same time
+
+        // when multiplying d with sum_rows_c, row i contributes to y[i] and the
+        // element on column j gets multiplied by sum_rows_c[j]
+        y[i] += d_val * c_row_ptr[j];
+        y[j] += d_val * c_row_ptr[i];
+      }
     }
-  }
 
-  for (int i = 0; i < N; ++i) {
-    y[i] += d[i * N + i] * sum_rows_c[i];
-
-    for (int j = i + 1; j < N; ++j) {
-      double d_val = d[i * N + j];
-      // since d is symmetric, we have d[j * N + i] = d[i * N + j], we can
-      // perform the update for both elements at the same time
-
-      // when multiplying d with sum_rows_c, row i contributes to y[i] and the
-      // element on column j gets multiplied by sum_rows_c[j]
-      y[i] += d_val * sum_rows_c[j];
-      y[j] += d_val * sum_rows_c[i];
-    }
   }
 
   for (int i = 0; i < N; ++i)
