@@ -629,7 +629,7 @@ This operation is very similar to the previous one, but we only use the `_mm256_
 
 This section is based on the analysis of the benchmarks that I ran for all the versions discussed, as well as the `cachegrind` reports. All benchmarks and cachegrind reports can be found in the `results/` directory. The values used for `N` are: 400, 800, 1000, 1200, 1400.
 
-To make the process easier, I have prompted GPT-5.4 (via Codex) to analyze the results and create python scripts for generating the graphs. The prompt I used can be found in `prompt.txt`.
+To make the process easier, I have prompted GPT-5.4 (via Codex) to analyze the results and create python scripts for generating the graphs. The prompt I used can be found in `prompt.txt`. Its full response cam be found in `REPORT.md`.
 
 ## `neopt_equiv` -> `opt_base` -> `opt_inline` -> `opt_avx`
 

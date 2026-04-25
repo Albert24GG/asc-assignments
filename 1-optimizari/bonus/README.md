@@ -63,7 +63,7 @@ I used the exact same testing methodology as for the haswell implementation, whi
 
 This section contains the analysis of the results obtained for the Ice Lake implementation, available in the `results/` directory, as well as the comparison with the results obtained for the Haswell implementation. 
 
-The graphs and parts of the analysis are once again generated using GPT-5.4 (via Codex), using the prompt from `prompt2.txt`.
+The graphs and parts of the analysis are once again generated using GPT-5.4 (via Codex), using the prompt from `prompt2.txt`. Its full response is available in `REPORT.md`.
 
 
 ### UCSX Results
