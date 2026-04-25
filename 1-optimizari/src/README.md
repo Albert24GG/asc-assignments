@@ -1,5 +1,5 @@
 
-## Haswell specifications
+## Haswell Setup
 
 - Model: Intel(R) Xeon(R) CPU E5-2640 v3
 - Base frequency: 2.60GHz
@@ -7,10 +7,15 @@
 - Socket: 2
 - Number of cores per socket: 8
 - Threads per core: 2
-- L1d cache: 32KB per core => 8-way associative, 64 sets
-- L1i cache: 32KB per core => 8-way associative, 64 sets
-- L2 cache: 256KB per core => 8-way associative, 512 sets
-- L3 cache: 20MB shared between all cores of a socket => 20-way associative, 16384 sets
+- L1d cache: 32KiB per core => 8-way associative, 64 sets
+- L1i cache: 32KiB per core => 8-way associative, 64 sets
+- L2 cache: 256KiB per core => 8-way associative, 512 sets
+- L3 cache: 20MiB shared between all cores of a socket => 20-way associative, 16384 sets
+- RAM size: 128 GiB
+
+- Compiler: GCC 15.2
+- LIBC: musl 1.2.5
+- BLAS: OpenBLAS 0.3.30
 
 
 ## Benchmarking methodology
@@ -83,6 +88,8 @@ The first iteration is `solver_opt_base.c`. It implements all basic optimization
 
 - Since we are compiling with `-O0`, the compiler won't even bother placing the variables in registers, so I manually specified the `register` keyword for any variable used. This indeed cluttered the code a lot, but I could not see any way around it. This, however, does not guarantee all variables will be placed in registers, for example if there are more variables than registers (a.k.a register spilling), but it still seems to have a significant impact on the performance. The decompiled output also shows variables previously stored on the stack are now stored in registers.
 
+- The transposes are no longer explicitly computed and stored in memory, but are instead accessed on the fly. For example, `A^t[i][k]` is accessed as `A[k][i]`. This saves both time and memory, and since we only access the transposed matrices only once, there is no advantage of storing it in memory.
+
 - I took advantage of the distributive property of `D * c_0 + D * c_1 + ... + D * c_n` and instead compute `D * (c_0 + c_1 + ... + c_n) = D * sum_rows_c`. This decreases the time complexity of this operation from `O(n^3) to O(n^2)`, but the overall complexity of algorithm is still dominated by the matrix-matrix multiplication.
 
 - Similar to what I did in the BLAS implementation, I allocated the memory for the matrices in a large contiguous block rather than separate allocations for each matrix. For the `C_row_sum` vector, I reuse the memory allocated for `C`, since after computing `C * C^T`, it is no longer needed. The way I now compute `C_row_sum` is to iterate over each line of `C` and add it to the next one. This way, in the end, the last line of `C` will contain `c_0 + c_1 + ... + c_n`, which is exactly `C_row_sum`. In addition, instead of storing `D` as a full `NxN` matrix, I only store its upper triangular part `N * (N + 1) / 2` elements, so each line decreases in size by 1 element: first `N` elements represent the first line, the following `N-1` elements represent the second line, and so on. This way, I save half of the memory, and now the matrix is no longer sparse, meaning that it should be more cache-friendly.
@@ -96,7 +103,7 @@ The first iteration is `solver_opt_base.c`. It implements all basic optimization
 
 ### Unoptimized equivalent version
 
-To keep the comparison betweent the unoptimized and optimized versions fair (i.e. same complexity), I also implemented an equivalent unoptimized version which also takes advantage of the distribute property discussed earlier. Otherwise, this is identical to the unoptimized version
+To keep the comparison between the unoptimized and optimized versions fair (i.e. same complexity), I also implemented an equivalent unoptimized version which also takes advantage of the redunction in number of operations (although the overall time complexity stays the same). Otherwise, this is identical to the unoptimized version
 
 ## Optimized versions
 
@@ -548,128 +555,81 @@ Using the same unroll factor of 8, we get the following assembly:
 	jg	.L3
 ```
 
-As we can see, there are 7 ymm registers that are left unused, so I figured it would be a good idea to unroll the loop even more, going up to 15. However, after doing that, the code runs much slower (3-4x). Since the `llvm-mca` analysis doesn't raise any red flags to me, I decided to ask Claude (Sonnet 4.6) and Gemini (3.1 Pro).
-
-Query:
-```text
-__attribute__((always_inline, optimize("O3"))) static inline void
-vec_axpy(int N, double alpha, const double *X, double *Y) {
-  register const __m256d alpha_vec = _mm256_set1_pd(alpha);
-
-  const int limit = (N / 32) * 32;
-  {
-    register double *y_ptr = Y;
-    register const double *x_ptr = X;
-    for (register int i = 0; i < limit; i += 32, y_ptr += 32, x_ptr += 32) {
-
-      register __m256d y_vec1 = _mm256_loadu_pd(y_ptr);
-      register __m256d y_vec2 = _mm256_loadu_pd(y_ptr + 4);
-      register __m256d y_vec3 = _mm256_loadu_pd(y_ptr + 8);
-      register __m256d y_vec4 = _mm256_loadu_pd(y_ptr + 12);
-      register __m256d y_vec5 = _mm256_loadu_pd(y_ptr + 16);
-      register __m256d y_vec6 = _mm256_loadu_pd(y_ptr + 20);
-      register __m256d y_vec7 = _mm256_loadu_pd(y_ptr + 24);
-      register __m256d y_vec8 = _mm256_loadu_pd(y_ptr + 28);
-
-      y_vec1 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr), y_vec1);
-      y_vec2 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 4), y_vec2);
-      y_vec3 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 8), y_vec3);
-      y_vec4 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 12), y_vec4);
-      y_vec5 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 16), y_vec5);
-      y_vec6 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 20), y_vec6);
-      y_vec7 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 24), y_vec7);
-      y_vec8 = _mm256_fmadd_pd(alpha_vec, _mm256_loadu_pd(x_ptr + 28), y_vec8);
-
-      _mm256_storeu_pd(y_ptr, y_vec1);
-      _mm256_storeu_pd(y_ptr + 4, y_vec2);
-      _mm256_storeu_pd(y_ptr + 8, y_vec3);
-      _mm256_storeu_pd(y_ptr + 12, y_vec4);
-      _mm256_storeu_pd(y_ptr + 16, y_vec5);
-      _mm256_storeu_pd(y_ptr + 20, y_vec6);
-      _mm256_storeu_pd(y_ptr + 24, y_vec7);
-      _mm256_storeu_pd(y_ptr + 28, y_vec8);
-    }
-  }
-
-  for (register int i = limit; i < N; ++i) {
-    Y[i] += alpha * X[i];
-  }
-}
-
-The hardware I am running on is:
-
-- CPU Model: Intel(R) Xeon(R) CPU E5-2640 v3
-- Base frequency: 2.60GHz
-- Boost frequency: 3.40GHz
-- Socket: 2
-- Number of cores per socket: 8
-- Threads per core: 2
-- L1d cache: 32KB per core => 8-way associative, 64 sets
-- L1i cache: 32KB per core => 8-way associative, 64 sets
-- L2 cache: 256KB per core => 8-way associative, 512 sets
-- L3 cache: 20MB shared between all cores of a socket => 20-way associative, 16384 sets
-
-
-The problem I have is that I also tried unroll factors of 10, 12, and 15, since there are 7 unused YMM registers left in the case of 8 loop unrolls. However, all of those unroll factors performed worse than the 8 loop unrolls one by up to 2 seconds for an array size of 1200. Memory seems to be accessed in the same sequential manner in both cases, and it is aligned the same way. Could you please provide an explanation of why this would be the case? Keep the answer concise and to the point.
-```
-
-Claude's answer:
-```markdown
-## Why Higher Unroll Factors Perform Worse
-
-The bottleneck here is almost certainly **loop overhead and instruction cache pressure**, not register pressure or memory access patterns.
-
-### Register File Pressure Is a Red Herring
-
-With 8 unrolls you use:
-- 8 YMM registers for `y_vec1`–`y_vec8`
-- 1 YMM register for `alpha_vec`
-- That's 9 of 16 available YMM registers — so yes, 7 are "free"
-
-But the CPU's **out-of-order engine** can already keep those free registers busy via *register renaming* on the physical register file (the Haswell µarch on your E5-2640 v3 has 168 physical YMM registers). Explicit unrolling beyond what the OOO window can already exploit gains you nothing there.
-
-### The Real Culprit: The Reorder Buffer (ROB) and Instruction Window
-
-The Haswell ROB holds **192 µops**. Your loop body at 8 unrolls is already large enough to keep the ROB saturated with independent FMA+load+store chains. Going to 10, 12, or 15 unrolls bloats the loop body past the point where:
-
-1. **The Loop Stream Detector (LSD)** can buffer it. Haswell's LSD holds **~56 µops**. At 8 unrolls your loop body likely fits or is near the limit; beyond that the LSD stops firing and instructions are re-fetched from the L1i cache every iteration.
-
-2. **L1i cache line thrashing** begins. At 15 unrolls the loop body grows large enough to span more 64-byte L1i cache lines, increasing front-end fetch pressure and potentially causing instruction cache misses.
-
-### Why 8 Is the Sweet Spot
-
-8 unrolls × (1 load Y + 1 load X + 1 FMA + 1 store) = **32 µops** per unroll group, ~**~56 total µops** in the loop body — sitting right at the LSD capacity. The CPU can execute the entire loop from the µop cache/LSD without re-decoding, giving you near-ideal throughput. Going higher evicts it from the LSD and the front-end becomes the bottleneck, costing you those ~2 seconds.
-```
-
-Gemini's answer:
-``` markdown
-It is completely intuitive to think that utilizing all 16 available YMM registers would yield better performance by maximizing parallel work, but hardware architecture limits often create an unexpected "sweet spot." 
-
-For your specific hardware (Intel Xeon E5-2640 v3, which is based on the **Haswell architecture**), an unroll factor of 8 is the optimal "Goldilocks" zone. Pushing the unroll factor to 10, 12, or 15 actually degrades performance due to the following hardware constraints:
-
-* **Loop Stream Detector (LSD) Limits:** Haswell processors have a Loop Stream Detector that caches small loops (up to **28 micro-ops**) to bypass the standard instruction fetch and decode pipeline entirely. An unroll factor of 8 generates roughly ~25-28 micro-ops (8 loads, 8 fused-multiply-adds, 8 stores, plus loop arithmetic). This fits perfectly into the LSD. Unrolling by 10 or more pushes the loop body over the 28-uop limit, forcing the CPU to continuously fetch and decode instructions from the L1 instruction cache, adding significant front-end latency.
-* **Execution Port Saturation:** Your `vec_axpy` function is strictly memory-bound. Haswell can sustain a maximum of **2 loads (Ports 2 and 3) and 1 store (Port 4) per clock cycle**. Your AVX instructions (processing 256 bits / 32 bytes at a time) perfectly saturate this L1 cache bandwidth limit at an unroll factor of 8. Unrolling further does not expose more Instruction-Level Parallelism (ILP) because the load/store execution ports are already operating at 100% capacity. 
-* **Register Renaming and Scheduling Pressure:** While you have 16 architectural YMM registers, the CPU relies on a pool of underlying physical registers to perform Out-of-Order (OoO) execution and hide memory latency. If you use 16 registers (1 for `alpha` + 15 for `Y`), you leave the compiler and the CPU's register renamer with zero breathing room. This restricts the Out-of-Order engine's ability to seamlessly schedule instructions, leading to pipeline stalls.
-
-**Summary:**
-For an array of size 1200, the data easily fits entirely within your 32KB L1d cache. Because the operation is L1-bandwidth limited rather than compute-limited, unrolling by 8 perfectly maxes out your load/store ports while keeping the loop small enough to run straight out of the CPU's ultra-fast Loop Stream Detector.
-```
-
-So it seems like they both agree that the problem most likely stems from the fact that the loop body becomes too large and exceeds the limits of the Loop Stream Detector. However, I can not fully rely on their answers and further investigation would be needed, perhaps using a hardware performance counter tool like `perf` (unavailable during the assignment).
-
-The takeaway, however, is that 8 looks like the sweet spot for the unroll factor.
+As we can see, there are 7 ymm registers that are left unused, so I figured it would be a good idea to unroll the loop even more. However, since the tile size is 32, we cannot go in larger strides. I tried an unroll factor of 9 (stride of 36) and a tile size of 36, but there are virtually no performance improvements, so I decided to stick with the unroll factor of 8. Additionally, a stride of 32 doubles (256 bytes) represents a multiple of the cache line size (64 bytes), so it means that we are not bringing in lines that are going to be just half utilized.
 
 
 ### Vec_add
 
-This operation is very similar to the previous one, but we only use the `_mm256_add_pd` instrinsic instead of the `_mm256_fmadd_pd` one. This has a latency of 10 and a reciprocal throughput of 1, so the theoretical unroll factor is 10. However, after testing and analysing using `llvm-mca`, it seems like there is no significant performance improvement after unrolling by 8, and therefore I decided to stick with this one.
+
+This operation is very similar to the previous one, but we only use the `_mm256_add_pd` instrinsic instead of the `_mm256_fmadd_pd` one. This has a latency of 10 and a reciprocal throughput of 1, so the theoretical unroll factor is 10. However, after testing and analysing using `llvm-mca`, it seems like there is no significant performance improvement after unrolling by 8, and therefore I decided to stick with this one. The following two llvm-mca timelines show there are virtually no improvements in pipeline utilization when going from an unroll factor of 8 to an unroll factor of 10:
+
+
+- Unroll factor of 8:
+```
+[0,18]    .  DeE-----------R  .    .    .    .    .    .    .    .    .    .    .    .   .   add	rax, 256
+[0,19]    .  D=eeeeeeeE----R  .    .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm4, ymmword ptr [rax - 160]
+[0,20]    .  D==eeeeeeeE---R  .    .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm3, ymmword ptr [rax - 128]
+[0,21]    .   D=eeeeeeeeeeeER .    .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm4, ymm4, ymmword ptr [rdx - 160]
+[0,22]    .   D==eeeeeeeeeeeER.    .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm3, ymm3, ymmword ptr [rdx - 128]
+[0,23]    .   D==eeeeeeeE----R.    .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm2, ymmword ptr [rax - 96]
+[0,24]    .   D===eeeeeeeE---R.    .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm1, ymmword ptr [rax - 64]
+[0,25]    .    D==eeeeeeeeeeeER    .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm2, ymm2, ymmword ptr [rdx - 96]
+[0,26]    .    D===eeeeeeeeeeeER   .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm1, ymm1, ymmword ptr [rdx - 64]
+[0,27]    .    D===eeeeeeeE----R   .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm0, ymmword ptr [rax - 32]
+[0,28]    .    D====eeeeeeeE---R   .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm7, ymmword ptr [rax - 256]
+[0,29]    .    .D===eeeeeeeeeeeER  .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm0, ymm0, ymmword ptr [rdx - 32]
+[0,30]    .    .D====eeeeeeeeeeeER .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm7, ymm7, ymmword ptr [rdx - 256]
+[0,31]    .    .D========eE------R .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 224], ymm6
+[0,32]    .    . D========eE-----R .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 192], ymm5
+[0,33]    .    . D=========eE----R .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 160], ymm4
+[0,34]    .    . D==============eER.    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 256], ymm7
+[0,35]    .    .  D=============eER.    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 128], ymm3
+[0,36]    .    .  D==============eER    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 96], ymm2
+[0,37]    .    .  D==============eER    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 64], ymm1
+[0,38]    .    .   D==============eER   .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 32], ymm0
+[0,39]    .    .   DeE--------------R   .    .    .    .    .    .    .    .    .    .   .   cmp	esi, ecx
+[0,40]    .    .   D=eE-------------R   .    .    .    .    .    .    .    .    .    .   .   jg	.L3
+```
+
+- Unroll factor of 10:
+```
+[0,27]    .    .DeE-----------R    .    .    .    .    .    .    .    .    .    .    .   .   add	rax, 320
+[0,28]    .    .D=eeeeeeeE----R    .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm6, ymmword ptr [rax - 224]
+[0,29]    .    .D==eeeeeeeE---R    .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm5, ymmword ptr [rax - 192]
+[0,30]    .    . D=eeeeeeeeeeeER   .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm6, ymm6, ymmword ptr [rdx - 224]
+[0,31]    .    . D==eeeeeeeeeeeER  .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm5, ymm5, ymmword ptr [rdx - 192]
+[0,32]    .    . D==eeeeeeeE----R  .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm4, ymmword ptr [rax - 160]
+[0,33]    .    . D===eeeeeeeE---R  .    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm3, ymmword ptr [rax - 128]
+[0,34]    .    .  D==eeeeeeeeeeeER .    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm4, ymm4, ymmword ptr [rdx - 160]
+[0,35]    .    .  D===eeeeeeeeeeeER.    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm3, ymm3, ymmword ptr [rdx - 128]
+[0,36]    .    .  D===eeeeeeeE----R.    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm2, ymmword ptr [rax - 96]
+[0,37]    .    .  D====eeeeeeeE---R.    .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm1, ymmword ptr [rax - 64]
+[0,38]    .    .   D===eeeeeeeeeeeER    .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm2, ymm2, ymmword ptr [rdx - 96]
+[0,39]    .    .   D====eeeeeeeeeeeER   .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm1, ymm1, ymmword ptr [rdx - 64]
+[0,40]    .    .   D====eeeeeeeE----R   .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm0, ymmword ptr [rax - 32]
+[0,41]    .    .   D=====eeeeeeeE---R   .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymm9, ymmword ptr [rax - 320]
+[0,42]    .    .    D====eeeeeeeeeeeER  .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm0, ymm0, ymmword ptr [rdx - 32]
+[0,43]    .    .    D=====eeeeeeeeeeeER .    .    .    .    .    .    .    .    .    .   .   vaddpd	ymm9, ymm9, ymmword ptr [rdx - 320]
+[0,44]    .    .    D=======eE--------R .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 288], ymm8
+[0,45]    .    .    .D=======eE-------R .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 256], ymm7
+[0,46]    .    .    .D========eE------R .    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 224], ymm6
+[0,47]    .    .    .D===============eER.    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 320], ymm9
+[0,48]    .    .    . D==============eER.    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 192], ymm5
+[0,49]    .    .    . D===============eER    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 160], ymm4
+[0,50]    .    .    . D===============eER    .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 128], ymm3
+[0,51]    .    .    .  D===============eER   .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 96], ymm2
+[0,52]    .    .    .  D===============eER   .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 64], ymm1
+[0,53]    .    .    .  D================eER  .    .    .    .    .    .    .    .    .   .   vmovupd	ymmword ptr [rax - 32], ymm0
+[0,54]    .    .    .   DeE---------------R  .    .    .    .    .    .    .    .    .   .   cmp	r8d, ecx
+[0,55]    .    .    .   D=eE--------------R  .    .    .    .    .    .    .    .    .   .   jg	.L3
+```
 
 
 # Comparisons and Graphs
 
 This section is based on the analysis of the benchmarks that I ran for all the versions discussed, as well as the `cachegrind` reports. All benchmarks and cachegrind reports can be found in the `results/` directory. The values used for `N` are: 400, 800, 1000, 1200, 1400.
 
-To make the process easier, I have prompted Codex (5.4) to analyze the results and create python scripts for generating the graphs. The prompt I used can be found in `prompt.txt`.
+To make the process easier, I have prompted GPT-5.4 (via Codex) to analyze the results and create python scripts for generating the graphs. The prompt I used can be found in `prompt.txt`.
 
 ## `neopt_equiv` -> `opt_base` -> `opt_inline` -> `opt_avx`
 
@@ -756,14 +716,3 @@ Graphs:
 The comparison with `neopt` highlights why `neopt_equiv` is the right baseline for the optimization path: simply regrouping the symmetric matrix-vector phase already halves the runtime. The hardware-focused optimizations then build on top of that by improving locality, reducing scalar overhead, and finally exploiting AVX.
 
 The comparison with BLAS shows a something different. `opt_avx` is much faster than the custom scalar code, but BLAS is still ahead by more than `2x`. That is expected. Vendor-tuned BLAS kernels combine stronger vectorization, better micro-kernel design, better packing, and decades of architecture-specific tuning. For example, at `N=1400` BLAS executes about `3.88G` instructions versus `10.34G` for `opt_avx`, and it also has far fewer branch mispredicts.
-
-## Conclusions
-
-The optimization story is consistent:
-
-1. `neopt_equiv` removes redundant work and gives the fair baseline.
-2. `opt_base` delivers the largest cache-locality improvement through blocking, loop reordering, contiguous buffers, and packed symmetric storage.
-3. `opt_inline` removes call overhead under `-O0` and adds another steady `~1.35x`.
-4. `opt_avx` keeps the same memory behavior but raises arithmetic throughput enough to add another `~3x`.
-
-Overall, the final hand-written optimized version is about `10x` faster than the fair baseline (`neopt_equiv`) and about `20x` faster than the literal unoptimized implementation (`neopt`), while still remaining around `2.2x` to `2.5x` slower than BLAS.
