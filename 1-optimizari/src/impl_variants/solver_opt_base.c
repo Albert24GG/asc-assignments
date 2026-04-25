@@ -6,13 +6,6 @@
 #include <immintrin.h>
 #include <string.h>
 
-#define MIN(a, b)                                                              \
-  ({                                                                           \
-    __typeof__(a) _a = (a);                                                    \
-    __typeof__(b) _b = (b);                                                    \
-    _a < _b ? _a : _b;                                                         \
-  })
-
 #define BLOCK_SIZE 32
 
 // L1d - 32KB
@@ -231,8 +224,6 @@ double *my_solver(int N, double *A, double *B, double *x) {
 
     for (register int i = 1; i < N; ++i) {
 
-      // assume N is a multiple of 4, otherwise here should be a switch with 4
-      // cases for the remaining elements
       for (register int j = 0; j < N; ++j, ++c_rowa_ptr, ++c_rowb_ptr) {
         *c_rowb_ptr += *c_rowa_ptr;
       }

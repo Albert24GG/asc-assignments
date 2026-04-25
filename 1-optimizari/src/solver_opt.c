@@ -6,13 +6,6 @@
 #include <immintrin.h>
 #include <string.h>
 
-#define MIN(a, b)                                                              \
-  ({                                                                           \
-    __typeof__(a) _a = (a);                                                    \
-    __typeof__(b) _b = (b);                                                    \
-    _a < _b ? _a : _b;                                                         \
-  })
-
 #define BLOCK_SIZE 32
 
 // L1d - 32KB
