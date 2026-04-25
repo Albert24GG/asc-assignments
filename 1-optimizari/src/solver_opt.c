@@ -127,7 +127,6 @@ vec_axpy(int N, double alpha, const double *X, double *Y) {
   }
 }
 
-
 // Y = X + Y
 __attribute__((always_inline, optimize("O3"))) static inline void
 vec_add(int N, const double *X, double *Y) {
@@ -168,8 +167,7 @@ vec_add(int N, const double *X, double *Y) {
   for (register int i = limit; i < N; ++i) {
     Y[i] += X[i];
   }
-} 
-
+}
 
 __attribute__((always_inline)) static inline void
 compute_block(int N, const double *a_t_ptr, const double *b_ptr,
@@ -323,6 +321,7 @@ double *my_solver(int N, double *A, double *B, double *x) {
   double *_data;
   posix_memalign((void **)&_data, 32,
                  (c_aligned_size + d_aligned_size) * sizeof(double));
+  memset(_data, 0, (c_aligned_size + d_aligned_size) * sizeof(double));
 
   double *C = _data;
 

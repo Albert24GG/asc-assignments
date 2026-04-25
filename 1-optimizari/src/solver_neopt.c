@@ -47,8 +47,8 @@ void mat_vec_mult(int N, const double *M, const double *X, double *Y) {
 
 double *my_solver(int N, double *A, double *B, double *x) {
   // transpose
-  double *aux = malloc(N * N * sizeof(double));
-  double *c = malloc(N * N * sizeof(double));
+  double *aux = calloc(N * N, sizeof(double));
+  double *c = calloc(N * N, sizeof(double));
 
   fill_with_transpose(N, A, aux);
 
@@ -58,7 +58,7 @@ double *my_solver(int N, double *A, double *B, double *x) {
   // transpose c
   fill_with_transpose(N, c, aux);
 
-  double *d = malloc(N * N * sizeof(double));
+  double *d = calloc(N * N, sizeof(double));
   // d = c * c^T
   // compute only upper triangular part of d, since d is symmetric
   matrix_mult_upper(N, c, aux, d);
@@ -82,7 +82,6 @@ double *my_solver(int N, double *A, double *B, double *x) {
         y[j] += d_val * c_row_ptr[i];
       }
     }
-
   }
 
   for (int i = 0; i < N; ++i)

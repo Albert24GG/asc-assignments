@@ -1,22 +1,15 @@
-==1722672== Memcheck, a memory error detector
-==1722672== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
-==1722672== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
-==1722672== Command: ./tema1_opt_m ../input/input_valgrind
-==1722672== Parent PID: 1722552
-==1722672== 
-==1722672== Syscall param msync(start) points to uninitialised byte(s)
-==1722672==    at 0x406EEF4: ??? (in /lib/ld-musl-x86_64.so.1)
-==1722672==    by 0x406C867: ??? (in /lib/ld-musl-x86_64.so.1)
-==1722672==    by 0x40ABB63: ???
-==1722672==  Address 0x50c8000 is in a rw- mapped file /export/home/acs/stud/a/albert.guiman/lab-asc/asc-assignments/1-optimizari/src/out1 segment
-==1722672== 
-==1722672== 
-==1722672== HEAP SUMMARY:
-==1722672==     in use at exit: 0 bytes in 0 blocks
-==1722672==   total heap usage: 7 allocs, 7 frees, 5,766,364 bytes allocated
-==1722672== 
-==1722672== All heap blocks were freed -- no leaks are possible
-==1722672== 
-==1722672== Use --track-origins=yes to see where uninitialised values come from
-==1722672== For lists of detected and suppressed errors, rerun with: -s
-==1722672== ERROR SUMMARY: 1 errors from 1 contexts (suppressed: 0 from 0)
+==1749159== Memcheck, a memory error detector
+==1749159== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==1749159== Using Valgrind-3.25.1 and LibVEX; rerun with -h for copyright info
+==1749159== Command: ./tema1_opt_m ../input/input_valgrind
+==1749159== Parent PID: 1749091
+==1749159== 
+==1749159== 
+==1749159== HEAP SUMMARY:
+==1749159==     in use at exit: 0 bytes in 0 blocks
+==1749159==   total heap usage: 7 allocs, 7 frees, 5,766,364 bytes allocated
+==1749159== 
+==1749159== All heap blocks were freed -- no leaks are possible
+==1749159== 
+==1749159== For lists of detected and suppressed errors, rerun with: -s
+==1749159== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
