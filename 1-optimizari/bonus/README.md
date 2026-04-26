@@ -14,6 +14,7 @@
 - L2 cache: 1.3MiB per core => 20-way associative, 1024 sets
 - L3 cache: 24MiB shared between all cores of a socket => 12-way associative, 32768 sets
 - RAM size: 512 GiB
+- RAM frequency and type: Not found
 
 - Compiler: GCC 15.2
 - LIBC: musl 1.2.5

@@ -13,6 +13,11 @@ double *my_solver(int N, double *A, double *B, double *x) {
 
   double *data = malloc(2 * N * N * sizeof(double));
 
+  if (data == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return NULL;
+  }
+
   double *c = data;
 
   // c = A^T * B
@@ -25,6 +30,12 @@ double *my_solver(int N, double *A, double *B, double *x) {
               N);
 
   double *y = calloc(N, sizeof(double));
+
+  if (y == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(data);
+    return NULL;
+  }
 
   double *c_row = c;
   for (int i = 0; i < N; ++i, c_row += N) {

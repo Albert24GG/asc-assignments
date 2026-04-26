@@ -192,6 +192,11 @@ double *my_solver(int N, double *A, double *B, double *x) {
   register double *_data =
       calloc(c_aligned_size + d_aligned_size, sizeof(double));
 
+  if (_data == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return NULL;
+  }
+
   register double *C = _data;
 
   // blocked matrix multiplication
@@ -220,6 +225,13 @@ double *my_solver(int N, double *A, double *B, double *x) {
   }
 
   register double *y = malloc(N * sizeof(double));
+
+  if (y == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(_data);
+    return NULL;
+  }
+
   memcpy(y, x, N * sizeof(double));
 
   // d * c_0 + d * c_1 + ... + d * c_{N-1} = d * (c_0 + c_1 + ... + c_{N-1})

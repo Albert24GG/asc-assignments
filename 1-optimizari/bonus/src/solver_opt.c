@@ -16,19 +16,21 @@
 
 __attribute__((always_inline, optimize("O3"))) static inline double
 reduce_vec(__m512d vec) {
-  // Reduce 8 doubles to 4, then use 128-bit scalar path
+  // reduce 8 doubles to 4, then use 128-bit scalar path
   register const __m256d upper = _mm512_extractf64x4_pd(vec, 1);
   register const __m256d lower = _mm512_castpd512_pd256(vec);
 
   register const __m256d partial = _mm256_add_pd(upper, lower);
 
-  // Reduce the 256-bit result further
+  // reduce the 256-bit result further
   register const __m128d upper128 = _mm256_extractf128_pd(partial, 1);
   register const __m128d lower128 = _mm256_castpd256_pd128(partial);
 
-  register const __m128d sum128 = _mm_add_pd(upper128, lower128);
-  register const __m128d high64 = _mm_unpackhi_pd(sum128, sum128);
-  register const __m128d result = _mm_add_sd(sum128, high64);
+  register const __m128d partial_sum128 = _mm_add_pd(upper128, lower128);
+  register const __m128d partial_sum_high64 =
+      _mm_unpackhi_pd(partial_sum128, partial_sum128);
+  register const __m128d result =
+      _mm_add_sd(partial_sum128, partial_sum_high64);
 
   return _mm_cvtsd_f64(result);
 }
@@ -288,6 +290,11 @@ double *my_solver(int N, double *A, double *B, double *x) {
   posix_memalign((void **)&_data, 64,
                  (2 * N2_aligned_size + c_aligned_size) * sizeof(double));
 
+  if (_data == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return NULL;
+  }
+
   {
     // move A and B to the aligned memory
     double *new_A = _data;
@@ -326,6 +333,13 @@ double *my_solver(int N, double *A, double *B, double *x) {
   }
 
   double *y = malloc(N * sizeof(double));
+
+  if (y == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(_data);
+    return NULL;
+  }
+
   memcpy(y, x, N * sizeof(double));
 
   // d * c_0 + d * c_1 + ... + d * c_{N-1} = d * (c_0 + c_1 + ... + c_{N-1})

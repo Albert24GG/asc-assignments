@@ -127,7 +127,6 @@ vec_axpy(int N, double alpha, const double *X, double *Y) {
   }
 }
 
-
 // Y = X + Y
 __attribute__((always_inline, optimize("O3"))) static inline void
 vec_add(int N, const double *X, double *Y) {
@@ -168,8 +167,7 @@ vec_add(int N, const double *X, double *Y) {
   for (register int i = limit; i < N; ++i) {
     Y[i] += X[i];
   }
-} 
-
+}
 
 __attribute__((always_inline)) static inline void
 compute_block(int N, const double *a_t_ptr, const double *b_ptr,
@@ -324,6 +322,11 @@ double *my_solver(int N, double *A, double *B, double *x) {
   posix_memalign((void **)&_data, 32,
                  (c_aligned_size + d_aligned_size) * sizeof(double));
 
+  if (_data == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return NULL;
+  }
+
   double *C = _data;
 
   // blocked matrix multiplication
@@ -352,6 +355,13 @@ double *my_solver(int N, double *A, double *B, double *x) {
   }
 
   double *y = malloc(N * sizeof(double));
+
+  if (y == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(_data);
+    return NULL;
+  }
+
   memcpy(y, x, N * sizeof(double));
 
   // d * c_0 + d * c_1 + ... + d * c_{N-1} = d * (c_0 + c_1 + ... + c_{N-1})

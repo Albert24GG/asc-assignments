@@ -321,6 +321,12 @@ double *my_solver(int N, double *A, double *B, double *x) {
   double *_data;
   posix_memalign((void **)&_data, 32,
                  (c_aligned_size + d_aligned_size) * sizeof(double));
+
+  if (_data == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return NULL;
+  }
+
   memset(_data, 0, (c_aligned_size + d_aligned_size) * sizeof(double));
 
   double *C = _data;
@@ -351,6 +357,13 @@ double *my_solver(int N, double *A, double *B, double *x) {
   }
 
   double *y = malloc(N * sizeof(double));
+
+  if (y == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(_data);
+    return NULL;
+  }
+
   memcpy(y, x, N * sizeof(double));
 
   // d * c_0 + d * c_1 + ... + d * c_{N-1} = d * (c_0 + c_1 + ... + c_{N-1})

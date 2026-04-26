@@ -21,5 +21,3 @@ compare: compare.c utils.h
 
 clean:
 	rm -rf compare tema1_blas tema1_neopt tema1_opt_m
-	rm -rf bench_blas bench_neopt bench_opt_m
-	rm -rf out1 out2 out3

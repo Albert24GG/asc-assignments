@@ -46,6 +46,18 @@ double *my_solver(int N, double *A, double *B, double *x) {
   double *aux = malloc(N * N * sizeof(double));
   double *c = malloc(N * N * sizeof(double));
 
+  if (aux == NULL || c == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+
+    if (aux)
+      free(aux);
+
+    if (c)
+      free(c);
+
+    return NULL;
+  }
+
   fill_with_transpose(N, A, aux);
 
   // c = A^T * B
@@ -55,11 +67,32 @@ double *my_solver(int N, double *A, double *B, double *x) {
   fill_with_transpose(N, c, aux);
 
   double *d = malloc(N * N * sizeof(double));
+
+  if (d == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+
+    free(aux);
+    free(c);
+
+    return NULL;
+  }
+
   // d = c * c^T
   // compute only upper triangular part of d, since d is symmetric
   matrix_mult_upper(N, c, aux, d);
 
   double *y = calloc(N, sizeof(double));
+
+  if (y == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+
+    free(aux);
+    free(c);
+    free(d);
+
+    return NULL;
+  }
+
   double *sum_rows_c = aux;
   memset(sum_rows_c, 0, N * sizeof(double));
 
