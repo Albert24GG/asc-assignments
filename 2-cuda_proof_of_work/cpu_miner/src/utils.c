@@ -24,7 +24,7 @@ void apply_sha256(const BYTE *input, BYTE *output) {
 
 // Compare two hashes
 int compare_hashes(BYTE* hash1, BYTE* hash2) {
-    for (int i = 0; i < SHA256_HASH_SIZE; i++) {
+    for (int i = 0; i < SHA256_HASH_SIZE - 1; i++) {
         if (hash1[i] < hash2[i]) {
             return -1; // hash1 is lower
         } else if (hash1[i] > hash2[i]) {
@@ -73,7 +73,7 @@ void construct_merkle_root(int transaction_size, BYTE *transactions, int max_tra
 int find_nonce(BYTE *difficulty, uint32_t max_nonce, BYTE *block_content, size_t current_length, BYTE *block_hash, uint32_t *valid_nonce) {
     char nonce_string[NONCE_SIZE];
 
-    for (uint32_t nonce = 0; nonce <= max_nonce; nonce++) {
+    for (uint32_t nonce = 0; nonce < max_nonce; nonce++) {
         sprintf(nonce_string, "%u", nonce);
         strcpy((char *)block_content + current_length, nonce_string);
         apply_sha256(block_content, block_hash);
