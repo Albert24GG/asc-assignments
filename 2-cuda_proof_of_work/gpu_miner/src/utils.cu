@@ -118,31 +118,51 @@ static void construct_merkle_root_cpu(int hash_size, BYTE *hashes, int n,
 }
 
 __global__ void construct_merkle_root_kernel(BYTE *d_hashes, int n) {
+  // Thread id in the grid
+  const int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  // Thread id in the block
   const int tid = threadIdx.x;
 
   static constexpr int COMBINED_SIZE = 2 * SHA256_HASH_SIZE - 1;
   BYTE combined[COMBINED_SIZE] = {};
   extern __shared__ BYTE shared_buf[];
-  BYTE *local_buf = shared_buf + SHA256_HASH_SIZE * tid;
+
+  // Load the hashes from vram to shared mem
+  {
+    const int left_idx = 2 * gtid;
+    if (left_idx < n) {
+      if (left_idx + 1 < n) {
+        memcpy(shared_buf + 2 * tid * SHA256_HASH_SIZE, d_hashes + left_idx * SHA256_HASH_SIZE,
+               2 * SHA256_HASH_SIZE);
+      } else {
+        // If odd number of hashes, duplicate the last one
+        memcpy(shared_buf + 2 * tid * SHA256_HASH_SIZE, d_hashes + left_idx * SHA256_HASH_SIZE,
+               SHA256_HASH_SIZE);
+        memcpy(shared_buf + (2 * tid + 1) * SHA256_HASH_SIZE, d_hashes + left_idx * SHA256_HASH_SIZE,
+               SHA256_HASH_SIZE);
+      }
+    }
+  }
+
+  int transactions_in_block = min(blockDim.x * 2, n - blockIdx.x * blockDim.x * 2);
+  int cur_n = transactions_in_block;
+
+  __syncthreads();
 
   bool active = true;
 
-  while (n > 1) {
-    if (active && tid < (n + 1) / 2) {
-      if (2 * tid + 1 < n) {
-        // normal case: combine two hashes
-        d_strcpy((char *)combined,
-                 (const char *)(d_hashes + (2 * tid) * SHA256_HASH_SIZE));
-        d_strcat((char *)combined,
-                 (const char *)(d_hashes + (2 * tid + 1) * SHA256_HASH_SIZE));
-      } else {
-        // odd case: duplicate the last hash
-        d_strcpy((char *)combined,
-                 (const char *)(d_hashes + (2 * tid) * SHA256_HASH_SIZE));
-        d_strcat((char *)combined,
-                 (const char *)(d_hashes + (2 * tid) * SHA256_HASH_SIZE));
-      }
-      apply_sha256(combined, local_buf);
+  while (cur_n > 1) {
+    const int threads_needed = (cur_n + 1) / 2;
+
+    if (tid < threads_needed) {
+      const int left_idx = 2 * tid;
+      const int right_idx = min(left_idx + 1, cur_n - 1);
+
+      memcpy(combined, shared_buf + left_idx * SHA256_HASH_SIZE, SHA256_HASH_SIZE);
+      d_strcat((char *)combined, (const char *)(shared_buf + right_idx * SHA256_HASH_SIZE));
+
+      apply_sha256(combined, combined);
     } else {
       active = false;
     }
@@ -150,35 +170,26 @@ __global__ void construct_merkle_root_kernel(BYTE *d_hashes, int n) {
     __syncthreads();
 
     if (active) {
-      d_strcpy((char *)(d_hashes + tid * SHA256_HASH_SIZE),
-               (const char *)local_buf);
+      memcpy(shared_buf + tid * SHA256_HASH_SIZE, combined, SHA256_HASH_SIZE);
     }
 
     __syncthreads();
 
-    n = (n + 1) / 2;
+    cur_n = (cur_n + 1) / 2;
+  }
+
+  if (tid == 0) {
+    memcpy(d_hashes + blockIdx.x * SHA256_HASH_SIZE, shared_buf, SHA256_HASH_SIZE);
   }
 }
 
 void construct_merkle_root(int transaction_size, BYTE *transactions,
                            int max_transactions_in_a_block, int n,
                            BYTE merkle_root[SHA256_HASH_SIZE]) {
-  static constexpr int MAX_THREADS_PER_THREADBLOCK = 1024;
-  static constexpr int MAX_STREAMS = 20;
-  static cudaStream_t streams[MAX_STREAMS];
-  static bool initialized_streams = false;
+  static constexpr int MAX_THREADS_PER_THREADBLOCK = 256;
+  static constexpr int MAX_TRANSACTIONS_PER_BLOCK = MAX_THREADS_PER_THREADBLOCK * 2;
 
-  if (!initialized_streams) {
-    for (int i = 0; i < MAX_STREAMS; ++i) {
-      cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking);
-    }
-    initialized_streams = true;
-  }
-
-  BYTE *d_hashes;
   BYTE *hashes = (BYTE *)malloc(n * SHA256_HASH_SIZE);
-
-  cudaMalloc((void **)&d_hashes, n * SHA256_HASH_SIZE);
   {
     BYTE *cur_hashes_ptr = hashes;
     BYTE *cur_transactions_ptr = transactions;
@@ -186,43 +197,36 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
              cur_transactions_ptr += transaction_size) {
       apply_sha256(cur_transactions_ptr, cur_hashes_ptr);
     }
-    cudaMemcpy(d_hashes, hashes, n * SHA256_HASH_SIZE, cudaMemcpyHostToDevice);
   }
+
+  if (n <= MAX_TRANSACTIONS_PER_BLOCK) {
+    construct_merkle_root_cpu(SHA256_HASH_SIZE, hashes, n, merkle_root);
+    free(hashes);
+    return;
+  }
+
+  BYTE *d_hashes;
+  cudaMalloc((void **)&d_hashes, n * SHA256_HASH_SIZE);
+  cudaMemcpy(d_hashes, hashes, n * SHA256_HASH_SIZE, cudaMemcpyHostToDevice);
 
   const int num_blocks =
-      (n + MAX_THREADS_PER_THREADBLOCK - 1) / MAX_THREADS_PER_THREADBLOCK;
-  int remaining_transactions = n;
+      (n + MAX_TRANSACTIONS_PER_BLOCK - 1) / MAX_TRANSACTIONS_PER_BLOCK;
+  const int share_mem_per_block = 512 * SHA256_HASH_SIZE;
 
-  for (int i = 0; i < num_blocks; ++i) {
-    const int transactions_in_block =
-        min(remaining_transactions, MAX_THREADS_PER_THREADBLOCK);
-    remaining_transactions -= transactions_in_block;
-
-    const int threads_per_block = (transactions_in_block + 1) / 2;
-    const int shared_mem_size = threads_per_block * SHA256_HASH_SIZE;
-    const int start_index = i * MAX_THREADS_PER_THREADBLOCK * SHA256_HASH_SIZE;
-    construct_merkle_root_kernel<<<1, threads_per_block, shared_mem_size,
-                                   streams[i]>>>(d_hashes + start_index,
-                                                 transactions_in_block);
-  }
+  construct_merkle_root_kernel<<<num_blocks, MAX_THREADS_PER_THREADBLOCK, share_mem_per_block>>>(d_hashes, n);
 
   cudaDeviceSynchronize();
 
-    if (num_blocks == 1) {
-      cudaMemcpy(merkle_root, d_hashes, SHA256_HASH_SIZE,
-                 cudaMemcpyDeviceToHost);
-    } else {
-      // Perform the merkle root reduction on the CPU on the remaining hashes
-      for (int i = 0; i < num_blocks; ++i) {
-        cudaMemcpy(hashes + i * SHA256_HASH_SIZE,
-                   d_hashes +
-                       i * SHA256_HASH_SIZE * MAX_THREADS_PER_THREADBLOCK,
-                   SHA256_HASH_SIZE, cudaMemcpyDeviceToHost);
-      }
+  cudaMemcpy(hashes, d_hashes, num_blocks * SHA256_HASH_SIZE, cudaMemcpyDeviceToHost);
 
-      construct_merkle_root_cpu(SHA256_HASH_SIZE, hashes, num_blocks,
-                                merkle_root);
-    }
+  if (num_blocks == 1) {
+    memcpy(merkle_root, hashes, SHA256_HASH_SIZE);
+  } else {
+    // Perform the merkle root reduction on the CPU on the remaining hashes
+    // We assume that the remaining number of hashes is small enough to be processed on the CPU efficiently
+    construct_merkle_root_cpu(SHA256_HASH_SIZE, hashes, num_blocks,
+                              merkle_root);
+  }
 
   free(hashes);
   cudaFree(d_hashes);
