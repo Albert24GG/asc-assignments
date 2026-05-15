@@ -117,7 +117,9 @@ static void construct_merkle_root_cpu(int hash_size, BYTE *hashes, int n,
   memcpy(merkle_root, hashes, SHA256_HASH_SIZE);
 }
 
-__global__ void construct_merkle_root_kernel(BYTE *d_hashes, BYTE *d_transactions, int n, int transaction_size) {
+__global__ void construct_merkle_root_kernel(BYTE *d_hashes,
+                                             BYTE *d_transactions, int n,
+                                             int transaction_size) {
   // Thread id in the grid
   const int gtid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -128,25 +130,31 @@ __global__ void construct_merkle_root_kernel(BYTE *d_hashes, BYTE *d_transaction
   BYTE combined[COMBINED_SIZE] = {};
   extern __shared__ BYTE shared_buf[];
 
-  // Load the transactions from vram, compute their hashes, and store in shared memory
+  // Load the transactions from vram, compute their hashes, and store in shared
+  // memory
   {
     const int left_idx = 2 * gtid;
     if (left_idx < n) {
       if (left_idx + 1 < n) {
-        memcpy(combined, d_transactions + left_idx * transaction_size, transaction_size);
+        memcpy(combined, d_transactions + left_idx * transaction_size,
+               transaction_size);
         apply_sha256(combined, shared_buf + 2 * tid * SHA256_HASH_SIZE);
-        memcpy(combined, d_transactions + (left_idx + 1) * transaction_size, transaction_size);
+        memcpy(combined, d_transactions + (left_idx + 1) * transaction_size,
+               transaction_size);
         apply_sha256(combined, shared_buf + (2 * tid + 1) * SHA256_HASH_SIZE);
       } else {
         // If odd number of hashes, duplicate the last one
-        memcpy(combined, d_transactions + left_idx * transaction_size, transaction_size);
+        memcpy(combined, d_transactions + left_idx * transaction_size,
+               transaction_size);
         apply_sha256(combined, shared_buf + 2 * tid * SHA256_HASH_SIZE);
-        memcpy(shared_buf + (2 * tid + 1) * SHA256_HASH_SIZE, shared_buf + 2 * tid * SHA256_HASH_SIZE, SHA256_HASH_SIZE);
+        memcpy(shared_buf + (2 * tid + 1) * SHA256_HASH_SIZE,
+               shared_buf + 2 * tid * SHA256_HASH_SIZE, SHA256_HASH_SIZE);
       }
     }
   }
 
-  int transactions_in_block = min(blockDim.x * 2, n - blockIdx.x * blockDim.x * 2);
+  int transactions_in_block =
+      min(blockDim.x * 2, n - blockIdx.x * blockDim.x * 2);
   int cur_n = transactions_in_block;
 
   __syncthreads();
@@ -160,8 +168,10 @@ __global__ void construct_merkle_root_kernel(BYTE *d_hashes, BYTE *d_transaction
       const int left_idx = 2 * tid;
       const int right_idx = min(left_idx + 1, cur_n - 1);
 
-      memcpy(combined, shared_buf + left_idx * SHA256_HASH_SIZE, SHA256_HASH_SIZE);
-      d_strcat((char *)combined, (const char *)(shared_buf + right_idx * SHA256_HASH_SIZE));
+      memcpy(combined, shared_buf + left_idx * SHA256_HASH_SIZE,
+             SHA256_HASH_SIZE);
+      d_strcat((char *)combined,
+               (const char *)(shared_buf + right_idx * SHA256_HASH_SIZE));
 
       apply_sha256(combined, combined);
     } else {
@@ -180,7 +190,8 @@ __global__ void construct_merkle_root_kernel(BYTE *d_hashes, BYTE *d_transaction
   }
 
   if (tid == 0) {
-    memcpy(d_hashes + blockIdx.x * SHA256_HASH_SIZE, shared_buf, SHA256_HASH_SIZE);
+    memcpy(d_hashes + blockIdx.x * SHA256_HASH_SIZE, shared_buf,
+           SHA256_HASH_SIZE);
   }
 }
 
@@ -188,31 +199,37 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
                            int max_transactions_in_a_block, int n,
                            BYTE merkle_root[SHA256_HASH_SIZE]) {
   static constexpr int MAX_THREADS_PER_THREADBLOCK = 256;
-  static constexpr int MAX_TRANSACTIONS_PER_BLOCK = MAX_THREADS_PER_THREADBLOCK * 2;
+  static constexpr int MAX_TRANSACTIONS_PER_BLOCK =
+      MAX_THREADS_PER_THREADBLOCK * 2;
 
-  BYTE* cuda_buf;
-  cudaMalloc((void**)&cuda_buf, n * transaction_size + n * SHA256_HASH_SIZE);
+  BYTE *cuda_buf;
+  cudaMalloc((void **)&cuda_buf, n * transaction_size + n * SHA256_HASH_SIZE);
 
   BYTE *d_hashes = cuda_buf;
   BYTE *d_transactions = cuda_buf + n * SHA256_HASH_SIZE;
-  cudaMemcpy(d_transactions, transactions, n * transaction_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_transactions, transactions, n * transaction_size,
+             cudaMemcpyHostToDevice);
 
   const int num_blocks =
       (n + MAX_TRANSACTIONS_PER_BLOCK - 1) / MAX_TRANSACTIONS_PER_BLOCK;
   const int share_mem_per_block = 512 * SHA256_HASH_SIZE;
 
-  construct_merkle_root_kernel<<<num_blocks, MAX_THREADS_PER_THREADBLOCK, share_mem_per_block>>>(d_hashes, d_transactions, n, transaction_size);
+  construct_merkle_root_kernel<<<num_blocks, MAX_THREADS_PER_THREADBLOCK,
+                                 share_mem_per_block>>>(
+      d_hashes, d_transactions, n, transaction_size);
 
   cudaDeviceSynchronize();
 
   BYTE *hashes = (BYTE *)malloc(num_blocks * SHA256_HASH_SIZE);
-  cudaMemcpy(hashes, d_hashes, num_blocks * SHA256_HASH_SIZE, cudaMemcpyDeviceToHost);
+  cudaMemcpy(hashes, d_hashes, num_blocks * SHA256_HASH_SIZE,
+             cudaMemcpyDeviceToHost);
 
   if (num_blocks == 1) {
     memcpy(merkle_root, hashes, SHA256_HASH_SIZE);
   } else {
     // Perform the merkle root reduction on the CPU on the remaining hashes
-    // We assume that the remaining number of hashes is small enough to be processed on the CPU efficiently
+    // We assume that the remaining number of hashes is small enough to be
+    // processed on the CPU efficiently
     construct_merkle_root_cpu(SHA256_HASH_SIZE, hashes, num_blocks,
                               merkle_root);
   }
@@ -222,23 +239,80 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
   cudaFree(cuda_buf);
 }
 
+__global__ void find_nonce_kernel(BYTE *difficulty, uint32_t max_nonce,
+                                  BYTE *block_content, size_t current_length,
+                                  uint32_t *valid_nonce, bool *found) {
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const int nonce = tid;
+
+  extern __shared__ BYTE shared_difficulty[];
+
+  if (threadIdx.x == 0) {
+    memcpy(shared_difficulty, difficulty, SHA256_HASH_SIZE);
+  }
+  __syncthreads();
+
+  if (nonce >= max_nonce || *found) {
+    return;
+  }
+
+  BYTE nonce_string[2 * SHA256_HASH_SIZE + NONCE_SIZE] = {};
+  memcpy(nonce_string, block_content, current_length);
+
+  int nonce_length = intToString(nonce, (char *)nonce_string + current_length);
+
+  apply_sha256(nonce_string, nonce_string);
+
+  if (compare_hashes(nonce_string, shared_difficulty) <= 0) {
+    *valid_nonce = nonce;
+    *found = true;
+  }
+}
+
 // TODO 2: Implement this function in CUDA
 int find_nonce(BYTE *difficulty, uint32_t max_nonce, BYTE *block_content,
                size_t current_length, BYTE *block_hash, uint32_t *valid_nonce) {
-  char nonce_string[NONCE_SIZE];
 
-  for (uint32_t nonce = 0; nonce < max_nonce; nonce++) {
-    sprintf(nonce_string, "%u", nonce);
-    strcpy((char *)block_content + current_length, nonce_string);
+  uint8_t *cuda_buf;
+  const size_t total_size =
+      SHA256_HASH_SIZE + current_length + 1 + sizeof(uint32_t) + sizeof(bool);
+  cudaMalloc((void **)&cuda_buf, total_size);
+  cudaMemset(cuda_buf, 0, total_size);
+  uint32_t *d_valid_nonce = (uint32_t *)cuda_buf;
+  BYTE *d_difficulty = (BYTE *)(cuda_buf + sizeof(uint32_t));
+  BYTE *d_block_content =
+      (BYTE *)(cuda_buf + sizeof(uint32_t) + SHA256_HASH_SIZE);
+  bool *d_found = (bool *)(cuda_buf + sizeof(uint32_t) + SHA256_HASH_SIZE +
+                           current_length + 1);
+
+  cudaMemcpy(d_difficulty, difficulty, SHA256_HASH_SIZE,
+             cudaMemcpyHostToDevice);
+  cudaMemcpy(d_block_content, block_content, current_length + 1,
+             cudaMemcpyHostToDevice);
+
+  const int threads_per_block = 256;
+  const int num_blocks =
+      (max_nonce + threads_per_block - 1) / threads_per_block;
+  const int shared_mem_size = 2 * SHA256_HASH_SIZE + NONCE_SIZE;
+
+  find_nonce_kernel<<<num_blocks, threads_per_block, shared_mem_size>>>(
+      d_difficulty, max_nonce, d_block_content, current_length, d_valid_nonce,
+      d_found);
+
+  cudaDeviceSynchronize();
+
+  bool found;
+  cudaMemcpy(&found, d_found, sizeof(bool), cudaMemcpyDeviceToHost);
+  if (found) {
+    cudaMemcpy(valid_nonce, d_valid_nonce, sizeof(uint32_t),
+               cudaMemcpyDeviceToHost);
+    sprintf((char *)block_content + current_length, "%u", *valid_nonce);
     apply_sha256(block_content, block_hash);
-
-    if (compare_hashes(block_hash, difficulty) <= 0) {
-      *valid_nonce = nonce;
-      return 0;
-    }
   }
 
-  return 1;
+  cudaFree(cuda_buf);
+
+  return found ? 0 : 1;
 }
 
 __global__ void dummy_kernel() {}
