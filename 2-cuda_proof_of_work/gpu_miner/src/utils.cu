@@ -1,9 +1,20 @@
 #include "utils.h"
+#include <cstdint>
 #include <cuda_runtime.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define CUDA_CHECK(call)                                                       \
+  do {                                                                         \
+    cudaError_t err = call;                                                    \
+    if (err != cudaSuccess) {                                                  \
+      fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__,         \
+              cudaGetErrorString(err));                                        \
+      exit(1);                                                                 \
+    }                                                                          \
+  } while (0)
 
 // CUDA sprintf alternative for nonce finding. Converts integer to its string
 // representation. Returns string's length.
@@ -239,33 +250,36 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
   cudaFree(cuda_buf);
 }
 
-__global__ void find_nonce_kernel(BYTE *difficulty, uint32_t max_nonce,
-                                  BYTE *block_content, size_t current_length,
-                                  uint32_t *valid_nonce, bool *found) {
-  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  const int nonce = tid;
+__constant__ BYTE d_constant_difficulty[SHA256_HASH_SIZE];
+__constant__ BYTE d_constant_block_content[2 * SHA256_HASH_SIZE];
 
-  extern __shared__ BYTE shared_difficulty[];
+__global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length,
+                                  BYTE *result_hash, uint32_t *found) {
+  const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t stride = gridDim.x * blockDim.x;
 
-  if (threadIdx.x == 0) {
-    memcpy(shared_difficulty, difficulty, SHA256_HASH_SIZE);
-  }
-  __syncthreads();
-
-  if (nonce >= max_nonce || *found) {
+  if (tid >= max_nonce || *found == 1) {
     return;
   }
 
   BYTE nonce_string[2 * SHA256_HASH_SIZE + NONCE_SIZE] = {};
-  memcpy(nonce_string, block_content, current_length);
+  BYTE hash[SHA256_HASH_SIZE] = {};
+  memcpy(nonce_string, d_constant_block_content, current_length);
 
-  int nonce_length = intToString(nonce, (char *)nonce_string + current_length);
+  for (uint64_t nonce = tid; nonce < max_nonce && *found == 0;
+       nonce += stride) {
 
-  apply_sha256(nonce_string, nonce_string);
+    int nonce_length =
+        intToString(nonce, (char *)nonce_string + current_length);
 
-  if (compare_hashes(nonce_string, shared_difficulty) <= 0) {
-    *valid_nonce = nonce;
-    *found = true;
+    apply_sha256(nonce_string, hash);
+
+    if (compare_hashes(hash, d_constant_difficulty) <= 0) {
+      if (atomicCAS(found, 0, 1) == 0) {
+        memcpy(result_hash, hash, SHA256_HASH_SIZE);
+      }
+      return;
+    }
   }
 }
 
@@ -274,45 +288,35 @@ int find_nonce(BYTE *difficulty, uint32_t max_nonce, BYTE *block_content,
                size_t current_length, BYTE *block_hash, uint32_t *valid_nonce) {
 
   uint8_t *cuda_buf;
-  const size_t total_size =
-      SHA256_HASH_SIZE + current_length + 1 + sizeof(uint32_t) + sizeof(bool);
+  const size_t total_size = sizeof(uint32_t) + SHA256_HASH_SIZE;
   cudaMalloc((void **)&cuda_buf, total_size);
   cudaMemset(cuda_buf, 0, total_size);
-  uint32_t *d_valid_nonce = (uint32_t *)cuda_buf;
-  BYTE *d_difficulty = (BYTE *)(cuda_buf + sizeof(uint32_t));
-  BYTE *d_block_content =
-      (BYTE *)(cuda_buf + sizeof(uint32_t) + SHA256_HASH_SIZE);
-  bool *d_found = (bool *)(cuda_buf + sizeof(uint32_t) + SHA256_HASH_SIZE +
-                           current_length + 1);
+  uint32_t *d_found = (uint32_t *)cuda_buf;
+  BYTE *result_hash = (BYTE *)(cuda_buf + sizeof(uint32_t));
 
-  cudaMemcpy(d_difficulty, difficulty, SHA256_HASH_SIZE,
-             cudaMemcpyHostToDevice);
-  cudaMemcpy(d_block_content, block_content, current_length + 1,
-             cudaMemcpyHostToDevice);
+  cudaMemcpyToSymbol(d_constant_difficulty, difficulty, SHA256_HASH_SIZE);
+  cudaMemcpyToSymbol(d_constant_block_content, block_content,
+                     current_length + 1);
 
-  const int threads_per_block = 256;
-  const int num_blocks =
-      (max_nonce + threads_per_block - 1) / threads_per_block;
-  const int shared_mem_size = 2 * SHA256_HASH_SIZE + NONCE_SIZE;
+  static constexpr uint32_t threads_per_block = 256;
+  uint32_t num_blocks =
+      ((uint64_t)max_nonce + threads_per_block - 1) / threads_per_block / 2;
 
-  find_nonce_kernel<<<num_blocks, threads_per_block, shared_mem_size>>>(
-      d_difficulty, max_nonce, d_block_content, current_length, d_valid_nonce,
-      d_found);
+  find_nonce_kernel<<<num_blocks, threads_per_block>>>(
+      max_nonce, current_length, result_hash, d_found);
 
   cudaDeviceSynchronize();
 
-  bool found;
-  cudaMemcpy(&found, d_found, sizeof(bool), cudaMemcpyDeviceToHost);
-  if (found) {
-    cudaMemcpy(valid_nonce, d_valid_nonce, sizeof(uint32_t),
+  uint32_t found;
+  cudaMemcpy(&found, d_found, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  if (found == 1) {
+    cudaMemcpy(block_hash, result_hash, SHA256_HASH_SIZE,
                cudaMemcpyDeviceToHost);
-    sprintf((char *)block_content + current_length, "%u", *valid_nonce);
-    apply_sha256(block_content, block_hash);
   }
 
   cudaFree(cuda_buf);
 
-  return found ? 0 : 1;
+  return 1 - found;
 }
 
 __global__ void dummy_kernel() {}
