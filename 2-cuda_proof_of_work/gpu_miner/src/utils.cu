@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <sha256.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -250,33 +251,55 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
   cudaFree(cuda_buf);
 }
 
-__constant__ BYTE d_constant_difficulty[SHA256_HASH_SIZE];
-__constant__ BYTE d_constant_block_content[2 * SHA256_HASH_SIZE];
+__device__ void find_nonce_apply_sha256(const BYTE *input, size_t input_length,
+                                        BYTE *output, SHA256_CTX ctx) {
+  static constexpr auto hex_chars = "0123456789abcdef";
 
-__global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length,
-                                  BYTE *result_hash, uint32_t *found) {
+  sha256_update(&ctx, input, input_length);
+  sha256_final(&ctx, output);
+
+  output[SHA256_HASH_SIZE - 1] = '\0'; // Null-terminate
+  for (int i = SHA256_BLOCK_SIZE - 1; i >= 0; --i) {
+    const BYTE byte = output[i];
+    output[i * 2] = hex_chars[(byte >> 4) & 0x0F]; // High nibble
+    output[i * 2 + 1] = hex_chars[byte & 0x0F];    // Low nibble
+  }
+}
+
+__constant__ BYTE d_constant_difficulty[SHA256_HASH_SIZE];
+__constant__ SHA256_CTX d_constant_block_content_shactx;
+__device__ BYTE d_hash[SHA256_HASH_SIZE];
+__device__ uint32_t d_found = 0;
+__device__ uint32_t d_nonce = 0;
+
+__global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
   const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t stride = gridDim.x * blockDim.x;
 
-  if (tid >= max_nonce || *found == 1) {
+  if (tid >= max_nonce || *(volatile uint32_t *)&d_found == 1) {
     return;
   }
 
-  BYTE nonce_string[2 * SHA256_HASH_SIZE + NONCE_SIZE] = {};
-  BYTE hash[SHA256_HASH_SIZE] = {};
-  memcpy(nonce_string, d_constant_block_content, current_length);
+  BYTE nonce_string[NONCE_SIZE];
+  BYTE hash[SHA256_HASH_SIZE];
+  const SHA256_CTX local_d_constant_block_content_shactx =
+      d_constant_block_content_shactx;
 
-  for (uint64_t nonce = tid; nonce < max_nonce && *found == 0;
+  for (uint64_t nonce = tid;
+       nonce < max_nonce && *(volatile uint32_t *)&d_found == 0;
        nonce += stride) {
 
-    int nonce_length =
-        intToString(nonce, (char *)nonce_string + current_length);
+    const int nonce_length = intToString(nonce, (char *)nonce_string);
 
-    apply_sha256(nonce_string, hash);
+    SHA256_CTX ctx = local_d_constant_block_content_shactx;
+    find_nonce_apply_sha256(nonce_string, nonce_length, hash, ctx);
 
     if (compare_hashes(hash, d_constant_difficulty) <= 0) {
-      if (atomicCAS(found, 0, 1) == 0) {
-        memcpy(result_hash, hash, SHA256_HASH_SIZE);
+      if (atomicCAS(&d_found, 0, 1) == 0) {
+        d_nonce = nonce;
+        for (int i = 0; i < SHA256_HASH_SIZE; i++) {
+          d_hash[i] = hash[i];
+        }
       }
       return;
     }
@@ -287,34 +310,42 @@ __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length,
 int find_nonce(BYTE *difficulty, uint32_t max_nonce, BYTE *block_content,
                size_t current_length, BYTE *block_hash, uint32_t *valid_nonce) {
 
-  uint8_t *cuda_buf;
-  const size_t total_size = sizeof(uint32_t) + SHA256_HASH_SIZE;
-  cudaMalloc((void **)&cuda_buf, total_size);
-  cudaMemset(cuda_buf, 0, total_size);
-  uint32_t *d_found = (uint32_t *)cuda_buf;
-  BYTE *result_hash = (BYTE *)(cuda_buf + sizeof(uint32_t));
+  int minGridSize = 0;
+  int blockSize = 0;
+  cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize,
+                                     find_nonce_kernel, 0, 0);
+
+  SHA256_CTX block_content_ctx;
+  sha256_init(&block_content_ctx);
+  sha256_update(&block_content_ctx, block_content, current_length);
+  cudaMemcpyToSymbol(d_constant_block_content_shactx, &block_content_ctx,
+                     sizeof(SHA256_CTX));
 
   cudaMemcpyToSymbol(d_constant_difficulty, difficulty, SHA256_HASH_SIZE);
-  cudaMemcpyToSymbol(d_constant_block_content, block_content,
-                     current_length + 1);
+  {
+    uint32_t zero = 0;
+    cudaMemcpyToSymbol(d_found, &zero, sizeof(uint32_t));
+  }
 
-  static constexpr uint32_t threads_per_block = 256;
-  uint32_t num_blocks =
-      ((uint64_t)max_nonce + threads_per_block - 1) / threads_per_block / 2;
+  const uint32_t threads_per_block = blockSize;
 
-  find_nonce_kernel<<<num_blocks, threads_per_block>>>(
-      max_nonce, current_length, result_hash, d_found);
+  const uint32_t k = 8;
+  const uint32_t num_blocks = minGridSize * k;
+
+  find_nonce_kernel<<<num_blocks, threads_per_block>>>(max_nonce,
+                                                       current_length);
 
   cudaDeviceSynchronize();
 
   uint32_t found;
-  cudaMemcpy(&found, d_found, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  cudaMemcpyFromSymbol(&found, d_found, sizeof(uint32_t), 0,
+                       cudaMemcpyDeviceToHost);
   if (found == 1) {
-    cudaMemcpy(block_hash, result_hash, SHA256_HASH_SIZE,
-               cudaMemcpyDeviceToHost);
+    cudaMemcpyFromSymbol(valid_nonce, d_nonce, sizeof(uint32_t), 0,
+                         cudaMemcpyDeviceToHost);
+    cudaMemcpyFromSymbol(block_hash, d_hash, SHA256_HASH_SIZE, 0,
+                         cudaMemcpyDeviceToHost);
   }
-
-  cudaFree(cuda_buf);
 
   return 1 - found;
 }
