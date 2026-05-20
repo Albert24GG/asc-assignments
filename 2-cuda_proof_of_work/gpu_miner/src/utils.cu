@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <cstdint>
+#include <cuda/atomic>
 #include <cuda_runtime.h>
 #include <sha256.h>
 #include <stdint.h>
@@ -252,7 +253,7 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
       &minGridSize, &blockSize, construct_merkle_root_kernel,
       [](int blockSize) { return blockSize * 2 * SHA256_HASH_SIZE; }, 0);
   // Make sure block size is a power of 2
-  blockSize =  [blockSize] {
+  blockSize = [blockSize] {
     int x = 1;
     while (x * 2 <= blockSize) {
       x *= 2;
@@ -269,12 +270,13 @@ void construct_merkle_root(int transaction_size, BYTE *transactions,
              cudaMemcpyHostToDevice);
 
   const uint32_t transactions_per_block = blockSize * 2;
-  const uint32_t num_blocks = (static_cast<uint64_t>(n) +
-  transactions_per_block - 1) / transactions_per_block; const uint32_t
-  share_mem_per_block = transactions_per_block * SHA256_HASH_SIZE;
+  const uint32_t num_blocks =
+      (static_cast<uint64_t>(n) + transactions_per_block - 1) /
+      transactions_per_block;
+  const uint32_t share_mem_per_block =
+      transactions_per_block * SHA256_HASH_SIZE;
 
-  construct_merkle_root_kernel<<<num_blocks, blockSize,
-                                 share_mem_per_block>>>(
+  construct_merkle_root_kernel<<<num_blocks, blockSize, share_mem_per_block>>>(
       d_hashes, d_transactions, n, transaction_size);
 
   cudaDeviceSynchronize();
@@ -314,14 +316,14 @@ __device__ void find_nonce_apply_sha256(const BYTE *input, size_t input_length,
 __constant__ BYTE d_constant_difficulty[SHA256_HASH_SIZE];
 __constant__ SHA256_CTX d_constant_block_content_shactx;
 __device__ BYTE d_hash[SHA256_HASH_SIZE];
-__device__ uint32_t d_found = 0;
 __device__ uint32_t d_nonce = 0;
+__device__ cuda::atomic<uint32_t, cuda::thread_scope_device> d_found(0);
 
 __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
   const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t stride = gridDim.x * blockDim.x;
 
-  if (tid >= max_nonce || *(volatile uint32_t *)&d_found == 1) {
+  if (tid >= max_nonce || d_found.load(cuda::memory_order_acquire) == 1) {
     return;
   }
 
@@ -331,7 +333,7 @@ __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
       d_constant_block_content_shactx;
 
   for (uint64_t nonce = tid;
-       nonce < max_nonce && *(volatile uint32_t *)&d_found == 0;
+       nonce < max_nonce && d_found.load(cuda::memory_order_acquire) == 0;
        nonce += stride) {
 
     const int nonce_length = intToString(nonce, (char *)nonce_string);
@@ -340,7 +342,9 @@ __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
     find_nonce_apply_sha256(nonce_string, nonce_length, hash, ctx);
 
     if (compare_hashes(hash, d_constant_difficulty) <= 0) {
-      if (atomicCAS(&d_found, 0, 1) == 0) {
+      uint32_t expected = 0;
+      if (d_found.compare_exchange_strong(expected, 1,
+                                          cuda::memory_order_acq_rel)) {
         d_nonce = nonce;
         for (int i = 0; i < SHA256_HASH_SIZE; i++) {
           d_hash[i] = hash[i];
