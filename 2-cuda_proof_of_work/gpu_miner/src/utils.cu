@@ -323,7 +323,7 @@ __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
   const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t stride = gridDim.x * blockDim.x;
 
-  if (tid >= max_nonce || d_found.load(cuda::memory_order_acquire) == 1) {
+  if (tid >= max_nonce || d_found.load(cuda::memory_order_relaxed) == 1) {
     return;
   }
 
@@ -333,7 +333,7 @@ __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
       d_constant_block_content_shactx;
 
   for (uint64_t nonce = tid;
-       nonce < max_nonce && d_found.load(cuda::memory_order_acquire) == 0;
+       nonce < max_nonce && d_found.load(cuda::memory_order_relaxed) == 0;
        nonce += stride) {
 
     const int nonce_length = intToString(nonce, (char *)nonce_string);
@@ -344,7 +344,7 @@ __global__ void find_nonce_kernel(uint32_t max_nonce, size_t current_length) {
     if (compare_hashes(hash, d_constant_difficulty) <= 0) {
       uint32_t expected = 0;
       if (d_found.compare_exchange_strong(expected, 1,
-                                          cuda::memory_order_acq_rel)) {
+                                          cuda::memory_order_relaxed)) {
         d_nonce = nonce;
         for (int i = 0; i < SHA256_HASH_SIZE; i++) {
           d_hash[i] = hash[i];
